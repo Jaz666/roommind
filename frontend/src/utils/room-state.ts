@@ -1,7 +1,12 @@
 /**
  * Shared utilities for reading and formatting RoomMind room state.
  */
-import type { HassDeviceRegistryEntry, HassEntityRegistryEntry, RoomMode } from "../types";
+import type {
+  HassDeviceRegistryEntry,
+  HassEntityRegistryEntry,
+  RoomLiveData,
+  RoomMode,
+} from "../types";
 import { localize, type TranslationKey } from "./localize";
 
 /**
@@ -59,4 +64,29 @@ const modeKeys: Record<RoomMode, TranslationKey> = {
  */
 export function formatMode(mode: RoomMode, language: string): string {
   return localize(modeKeys[mode], language);
+}
+
+/** Explain an active cooling interlock without changing the underlying control mode. */
+export function coolingProtectionStatus(live: RoomLiveData | undefined, language: string) {
+  if (!live?.heating_blocked_by_cooling) return null;
+  switch (live.cooling_interlock_reason) {
+    case "cooling":
+      return {
+        label: localize("interlock.status_cooling", language),
+        description: localize("interlock.cooling", language),
+        className: "mode-cooling",
+      };
+    case "recovery":
+      return {
+        label: localize("interlock.status_recovery", language),
+        description: localize("interlock.recovery", language),
+        className: "mode-cooling",
+      };
+    default:
+      return {
+        label: localize("interlock.status_unknown", language),
+        description: localize("interlock.unknown", language),
+        className: "mode-heating",
+      };
+  }
 }

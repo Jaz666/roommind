@@ -1,4 +1,4 @@
-# Household cooling-interlock trial: 1.7.9b1
+# Household cooling-interlock trial: 1.7.9b2
 
 This is an experimental prerelease of the household fork. It adds opt-in radiator
 heating protection for independently controlled AC units. Shared Toshiba mode
@@ -21,12 +21,12 @@ do not try to install a second copy alongside it.
 
 ## Install the test package manually
 
-Use the verified `roommind.zip` asset for **1.7.9b1**. It contains `manifest.json`,
+Use the verified `roommind.zip` asset for **1.7.9b2**. It contains `manifest.json`,
 Python modules, and `frontend/roommind-panel.js` at its root; it does not contain
 an enclosing `custom_components` directory.
 
 1. Extract the ZIP to a temporary directory on your own machine and confirm the
-   manifest version is `1.7.9b1`.
+   manifest version is `1.7.9b2`.
 2. Replace `/config/custom_components/roommind` with the extracted directory's
    contents, using your existing configuration-file access (SSH/Samba/Studio Code
    Server, for example). Keep the backup outside `custom_components`.
@@ -69,11 +69,11 @@ just to force heating to resume.
 2. Start cooling through the Toshiba app as you normally would. Use explicit
    **Cool**, rather than **Auto**, for this trial.
 3. Confirm Home Assistant reports `climate.ac_master_bedroom` in `cool` mode.
-4. Confirm RoomMind reports **Heating blocked: cooling mode selected** and the
+4. Confirm RoomMind reports **Cooling protection** in the main status and **Heating blocked: cooling mode selected** in the protection card and the
    Tado heating target/mode is lowered/off. Watch demand fall and the radiator stop
    receiving new heat. Warm metal can remain warm after the valve closes.
 5. Verify the Toshiba stays running and other rooms can still request heat.
-6. Stop cooling normally. Observe the recovery message. Heating is eligible again
+6. Stop cooling normally. Observe **Heating recovery** in the main status and the recovery message in the protection card. Heating is eligible again
    only after the delay and temperature margin; normal room demand then decides
    whether to heat.
 
@@ -100,7 +100,7 @@ household changes during the trial so a full backup restore does not discard the
 ## Publish through GitHub when API access is available
 
 The test code belongs on branch `household/cooling-interlock`. In GitHub Releases,
-create a release targeting that branch's tested commit, with tag `v1.7.9b1` and
+create a release targeting that branch's tested commit, with tag `v1.7.9b2` and
 **Set as a pre-release** selected. Attach `roommind.zip`; keep it off the latest
 stable release channel. The repository release workflow can also build and upload
 that asset when publishing triggers it. Check that the asset is present before

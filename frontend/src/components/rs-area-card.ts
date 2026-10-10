@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, HassArea, RoomConfig } from "../types";
-import { getModeClass, formatMode } from "../utils/room-state";
+import { getModeClass, formatMode, coolingProtectionStatus } from "../utils/room-state";
 import { modeStyles } from "../styles/shared-mode-styles";
 import { localize } from "../utils/localize";
 import { mdiEyeOff } from "../utils/icons";
@@ -377,6 +377,10 @@ export class RsAreaCard extends LitElement {
     const isConfigured = this.config !== null && hasClimateSelected && !isOutdoor;
     const live = this.config?.live;
     const mode = live?.mode;
+    const protection =
+      this.climateControlActive && this.config?.climate_control_enabled !== false
+        ? coolingProtectionStatus(live, this.hass?.language ?? "en")
+        : null;
 
     const hasSensorData =
       (!isConfigured || isOutdoor) &&
@@ -432,10 +436,14 @@ export class RsAreaCard extends LitElement {
             ${
               isConfigured && live
                 ? html`
-                    <span class="mode-pill ${getModeClass(live.mode)}">
+                    <span
+                      class="mode-pill ${protection?.className ?? getModeClass(live.mode)}"
+                      role="status"
+                      title=${protection?.description ?? ""}
+                    >
                       <span class="mode-dot"></span>
-                      ${formatMode(live.mode, this.hass.language)}${
-                        live.heating_power > 0 && live.heating_power < 100
+                      ${protection?.label ?? formatMode(live.mode, this.hass.language)}${
+                        !protection && live.heating_power > 0 && live.heating_power < 100
                           ? html` ${live.heating_power}%`
                           : nothing
                       }

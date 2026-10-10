@@ -571,5 +571,8 @@
   "interlock.deadband": "Resume heating below target by (°C)",
   "interlock.cooling": "Heating blocked: cooling mode selected. Learning paused.",
   "interlock.recovery": "Heating blocked: waiting for recovery time and temperature margin. Learning paused.",
-  "interlock.unknown": "Heating blocked: cooling status unavailable or automatic mode selected. Learning paused."
+  "interlock.unknown": "Heating blocked: cooling status unavailable or automatic mode selected. Learning paused.",
+  "interlock.status_cooling": "Cooling protection",
+  "interlock.status_recovery": "Heating recovery",
+  "interlock.status_unknown": "Cooling status unknown"
 }
