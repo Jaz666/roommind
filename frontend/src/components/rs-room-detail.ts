@@ -90,6 +90,9 @@ export class RsRoomDetail extends LitElement {
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
   @state() private _heatSourceOrchestration = false;
+  @state() private _coolingInterlockEntities: string[] = [];
+  @state() private _coolingInterlockDelay = 300;
+  @state() private _coolingInterlockDeadband = 0.3;
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
@@ -293,6 +296,9 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
+      this._coolingInterlockEntities = [...(this.config.cooling_interlock_entities ?? [])];
+      this._coolingInterlockDelay = this.config.cooling_interlock_delay ?? 300;
+      this._coolingInterlockDeadband = this.config.cooling_interlock_deadband ?? 0.3;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
       this._heatSourceAcMinOutdoor = this.config.heat_source_ac_min_outdoor ?? -15.0;
@@ -425,6 +431,100 @@ export class RsRoomDetail extends LitElement {
                       .language=${this.hass.language}
                       @mode-changed=${this._onModeChanged}
                     ></rs-climate-mode-selector>
+                  </rs-section-card>
+
+                  <rs-section-card
+                    icon="mdi:snowflake-alert"
+                    .heading=${localize("interlock.title", this.hass.language)}
+                  >
+                    <p>${localize("interlock.description", this.hass.language)}</p>
+                    ${this._coolingInterlockEntities.map(
+                      (eid) => html`
+                        <p>
+                          ${this.hass.states[eid]?.attributes.friendly_name ?? eid}
+                          <button
+                            @click=${() => {
+                              this._coolingInterlockEntities =
+                                this._coolingInterlockEntities.filter((value) => value !== eid);
+                              this._autoSave();
+                            }}
+                          >
+                            ${localize("interlock.remove", this.hass.language)}
+                          </button>
+                        </p>
+                      `,
+                    )}
+                    <ha-entity-picker
+                      .hass=${this.hass}
+                      .includeDomains=${["climate"]}
+                      .value=${""}
+                      .label=${localize("interlock.add", this.hass.language)}
+                      @value-changed=${(event: CustomEvent<{ value: string }>) => {
+                        const eid = event.detail.value;
+                        if (eid && !this._coolingInterlockEntities.includes(eid)) {
+                          this._coolingInterlockEntities = [...this._coolingInterlockEntities, eid];
+                          this._autoSave();
+                        }
+                      }}
+                    ></ha-entity-picker>
+                    ${
+                      this._coolingInterlockEntities.length
+                        ? html`
+                            <p>
+                              <label>
+                                ${localize("interlock.delay", this.hass.language)}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="60"
+                                  step="1"
+                                  .value=${String(this._coolingInterlockDelay / 60)}
+                                  @change=${(event: Event) => {
+                                    const input = event.target as HTMLInputElement;
+                                    if (input.value && input.checkValidity()) {
+                                      this._coolingInterlockDelay = Number(input.value) * 60;
+                                      this._autoSave();
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </p>
+                            <p>
+                              <label>
+                                ${localize("interlock.deadband", this.hass.language)}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="2"
+                                  step="0.1"
+                                  .value=${String(this._coolingInterlockDeadband)}
+                                  @change=${(event: Event) => {
+                                    const input = event.target as HTMLInputElement;
+                                    if (input.value && input.checkValidity()) {
+                                      this._coolingInterlockDeadband = Number(input.value);
+                                      this._autoSave();
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </p>
+                          `
+                        : nothing
+                    }
+                    ${
+                      this.config?.live?.heating_blocked_by_cooling
+                        ? html`<p role="status">
+                            ${localize(
+                              this.config.live.cooling_interlock_reason === "cooling"
+                                ? "interlock.cooling"
+                                : this.config.live.cooling_interlock_reason === "recovery"
+                                  ? "interlock.recovery"
+                                  : "interlock.unknown",
+                              this.hass.language,
+                            )}
+                          </p>`
+                        : nothing
+                    }
                   </rs-section-card>
 
                   <rs-section-card
@@ -1117,6 +1217,9 @@ export class RsRoomDetail extends LitElement {
         window_open_delay: this._windowOpenDelay,
         window_close_delay: this._windowCloseDelay,
         climate_mode: this._climateMode,
+        cooling_interlock_entities: this._coolingInterlockEntities,
+        cooling_interlock_delay: this._coolingInterlockDelay,
+        cooling_interlock_deadband: this._coolingInterlockDeadband,
         schedules: this._schedules,
         schedule_selector_entity: this._scheduleSelectorEntity,
         comfort_heat: this._comfortHeat,

@@ -54,6 +54,8 @@ export interface RoomLiveData {
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
+  heating_blocked_by_cooling?: boolean;
+  cooling_interlock_reason?: "cooling" | "recovery" | "cooling_status_unknown" | null;
   compressor_protection_active: boolean;
   compressor_protection_reason: "min_off" | "min_run" | null;
   coil_dry_active: boolean;
@@ -116,6 +118,9 @@ export interface RoomConfig {
   window_open_delay: number;
   window_close_delay: number;
   climate_mode: ClimateMode;
+  cooling_interlock_entities?: string[];
+  cooling_interlock_delay?: number;
+  cooling_interlock_deadband?: number;
   schedules: ScheduleEntry[];
   schedule_selector_entity: string;
   comfort_temp?: number;

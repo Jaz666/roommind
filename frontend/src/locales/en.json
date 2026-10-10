@@ -562,5 +562,14 @@
   "heat_source.ac_min_outdoor": "Min. outdoor temp for AC heating",
   "heat_source.ac_min_outdoor_hint": "Disable AC heating entirely below this temperature to protect the heat pump hardware.",
   "heat_source.ac_min_outdoor_suffix": "°C",
-  "heat_source.summary_disabled": "Smart source selection is off"
+  "heat_source.summary_disabled": "Smart source selection is off",
+  "interlock.title": "Heating protection during cooling",
+  "interlock.description": "Select AC units to monitor in this room. Heating is blocked while they are in cool or dry mode, even when controlled outside RoomMind. Monitoring does not give RoomMind control of these units. Learning pauses while protection is active. Unknown cooling status also blocks heating. Leave the list empty to disable.",
+  "interlock.add": "Add an AC to monitor",
+  "interlock.remove": "Remove",
+  "interlock.delay": "Recovery delay (minutes)",
+  "interlock.deadband": "Resume heating below target by (°C)",
+  "interlock.cooling": "Heating blocked: cooling mode selected. Learning paused.",
+  "interlock.recovery": "Heating blocked: waiting for recovery time and temperature margin. Learning paused.",
+  "interlock.unknown": "Heating blocked: cooling status unavailable or automatic mode selected. Learning paused."
 }

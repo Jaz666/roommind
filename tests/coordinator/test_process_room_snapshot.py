@@ -32,6 +32,8 @@ def _setup_coordinator(hass, mock_config_entry, rooms, settings=None):
 
 # Keys that every normal (non-outdoor) room return dict must contain.
 NORMAL_ROOM_KEYS = {
+    "heating_blocked_by_cooling",
+    "cooling_interlock_reason",
     "area_id",
     "current_temp",
     "current_temp_raw",

@@ -451,6 +451,15 @@ class ThermalEKF:
         """Learned window heat-exchange multiplier."""
         return self._k_window
 
+    def sync_temperature(self, T_measured: float) -> None:
+        """Track an unmodelled temperature change without learning parameters.
+
+        External cooling must not become a large heat-loss observation when
+        training resumes. Retain learned parameters, uncertainty, and counts.
+        """
+        self._x[0] = T_measured
+        self._initialized = True
+
     def update_window_open(
         self,
         T_measured: float,
@@ -993,6 +1002,10 @@ class RoomModelManager:
         if area_id not in self._estimators:
             self._estimators[area_id] = ThermalEKF()
         return self._estimators[area_id]
+
+    def sync_temperature(self, area_id: str, T_measured: float) -> None:
+        """Resynchronise room temperature after an unmodelled heat/cool input."""
+        self.get_estimator(area_id).sync_temperature(T_measured)
 
     def update(
         self,

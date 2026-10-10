@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CLIMATE_MODES,
@@ -89,6 +90,9 @@ _ROOM_SAVE_FIELDS = (
     "humidity_sensor",
     "occupancy_sensors",
     "climate_mode",
+    "cooling_interlock_entities",
+    "cooling_interlock_delay",
+    "cooling_interlock_deadband",
     "schedules",
     "schedule_selector_entity",
     "window_sensors",
@@ -288,6 +292,8 @@ async def websocket_list_rooms(
             "active_cover_schedule_index": live.get("active_cover_schedule_index", -1),
             "active_heat_sources": live.get("active_heat_sources"),
             "learning_paused_reason": learning_paused_reason,
+            "heating_blocked_by_cooling": live.get("heating_blocked_by_cooling", False),
+            "cooling_interlock_reason": live.get("cooling_interlock_reason"),
             "compressor_protection_active": live.get("compressor_protection_active", False),
             "compressor_protection_reason": live.get("compressor_protection_reason"),
             "coil_dry_active": live.get("coil_dry_active", False),
@@ -373,6 +379,9 @@ async def websocket_list_rooms(
         vol.Optional("humidity_sensor"): str,
         vol.Optional("occupancy_sensors"): [str],
         vol.Optional("climate_mode"): vol.In(CLIMATE_MODES),
+        vol.Optional("cooling_interlock_entities"): [cv.entity_domain("climate")],
+        vol.Optional("cooling_interlock_delay"): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
+        vol.Optional("cooling_interlock_deadband"): vol.All(vol.Coerce(float), vol.Range(min=0, max=2)),
         vol.Optional("schedules"): [{vol.Required("entity_id"): str}],
         vol.Optional("schedule_selector_entity"): str,
         vol.Optional("window_sensors"): [str],
