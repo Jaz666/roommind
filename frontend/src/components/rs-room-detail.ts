@@ -7,6 +7,7 @@ import type {
   RoomConfig,
   ClimateMode,
   ScheduleEntry,
+  ScheduleChoice,
   CoverScheduleEntry,
   DeviceConfig,
   DeviceType,
@@ -15,6 +16,7 @@ import type {
 import "./rs-hero-status";
 import "./rs-climate-mode-selector";
 import "./rs-schedule-settings";
+import "./rs-schedule-link";
 import "./rs-device-section";
 import "./rs-sensor-section";
 import "./rs-section-card";
@@ -41,6 +43,7 @@ export class RsRoomDetail extends LitElement {
   @property({ attribute: false }) public area!: HassArea;
   @property({ attribute: false }) public config: RoomConfig | null = null;
   @property({ attribute: false }) public hass!: HomeAssistant;
+  @property({ attribute: false }) public scheduleChoices: ScheduleChoice[] = [];
   @property({ type: Boolean }) public presenceEnabled = false;
   @property({ attribute: false }) public presencePersons: string[] = [];
   @property({ type: Boolean }) public climateControlActive = true;
@@ -533,25 +536,34 @@ export class RsRoomDetail extends LitElement {
                     editable
                     @edit-click=${this._openEdit("schedule")}
                   >
-                    <rs-schedule-settings
+                    <rs-schedule-link
                       .hass=${this.hass}
-                      .schedules=${this._schedules}
-                      .scheduleSelectorEntity=${this._scheduleSelectorEntity}
-                      .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
-                      .comfortHeat=${this._comfortHeat}
-                      .comfortCool=${this._comfortCool}
-                      .ecoHeat=${this._ecoHeat}
-                      .ecoCool=${this._ecoCool}
-                      .climateMode=${this._climateMode}
-                      .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
-                      .editing=${false}
-                      @schedules-changed=${this._onSchedulesChanged}
-                      @schedule-selector-changed=${this._onScheduleSelectorChanged}
-                      @comfort-heat-changed=${this._onComfortHeatChanged}
-                      @comfort-cool-changed=${this._onComfortCoolChanged}
-                      @eco-heat-changed=${this._onEcoHeatChanged}
-                      @eco-cool-changed=${this._onEcoCoolChanged}
-                    ></rs-schedule-settings>
+                      .config=${this.config}
+                      .choices=${this.scheduleChoices}
+                    ></rs-schedule-link>
+                    ${
+                      !this.config?.roommind_schedule_id
+                        ? html`<rs-schedule-settings
+                            .hass=${this.hass}
+                            .schedules=${this._schedules}
+                            .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+                            .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+                            .comfortHeat=${this._comfortHeat}
+                            .comfortCool=${this._comfortCool}
+                            .ecoHeat=${this._ecoHeat}
+                            .ecoCool=${this._ecoCool}
+                            .climateMode=${this._climateMode}
+                            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+                            .editing=${false}
+                            @schedules-changed=${this._onSchedulesChanged}
+                            @schedule-selector-changed=${this._onScheduleSelectorChanged}
+                            @comfort-heat-changed=${this._onComfortHeatChanged}
+                            @comfort-cool-changed=${this._onComfortCoolChanged}
+                            @eco-heat-changed=${this._onEcoHeatChanged}
+                            @eco-cool-changed=${this._onEcoCoolChanged}
+                          ></rs-schedule-settings>`
+                        : nothing
+                    }
                     ${
                       this.config
                         ? html`
@@ -794,25 +806,35 @@ export class RsRoomDetail extends LitElement {
             </p>
             <p>${unsafeHTML(localize("schedule.help_multi", lang))}</p>
           </div>
-          <rs-schedule-settings
+          <rs-schedule-link
             .hass=${this.hass}
-            .schedules=${this._schedules}
-            .scheduleSelectorEntity=${this._scheduleSelectorEntity}
-            .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
-            .comfortHeat=${this._comfortHeat}
-            .comfortCool=${this._comfortCool}
-            .ecoHeat=${this._ecoHeat}
-            .ecoCool=${this._ecoCool}
-            .climateMode=${this._climateMode}
-            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+            .config=${this.config}
+            .choices=${this.scheduleChoices}
             .editing=${true}
-            @schedules-changed=${this._onSchedulesChanged}
-            @schedule-selector-changed=${this._onScheduleSelectorChanged}
-            @comfort-heat-changed=${this._onComfortHeatChanged}
-            @comfort-cool-changed=${this._onComfortCoolChanged}
-            @eco-heat-changed=${this._onEcoHeatChanged}
-            @eco-cool-changed=${this._onEcoCoolChanged}
-          ></rs-schedule-settings>
+          ></rs-schedule-link>
+          ${
+            !this.config?.roommind_schedule_id
+              ? html`<rs-schedule-settings
+                  .hass=${this.hass}
+                  .schedules=${this._schedules}
+                  .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+                  .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+                  .comfortHeat=${this._comfortHeat}
+                  .comfortCool=${this._comfortCool}
+                  .ecoHeat=${this._ecoHeat}
+                  .ecoCool=${this._ecoCool}
+                  .climateMode=${this._climateMode}
+                  .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+                  .editing=${true}
+                  @schedules-changed=${this._onSchedulesChanged}
+                  @schedule-selector-changed=${this._onScheduleSelectorChanged}
+                  @comfort-heat-changed=${this._onComfortHeatChanged}
+                  @comfort-cool-changed=${this._onComfortCoolChanged}
+                  @eco-heat-changed=${this._onEcoHeatChanged}
+                  @eco-cool-changed=${this._onEcoCoolChanged}
+                ></rs-schedule-settings>`
+              : nothing
+          }
         </rs-edit-dialog>`;
       case "devices":
         return html`<rs-edit-dialog

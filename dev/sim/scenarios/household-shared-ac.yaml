@@ -49,7 +49,9 @@ roommind:
         name: Toshiba shared outdoor unit
         members: [climate.ac_living_room, climate.ac_master_bedroom, climate.ac_alex, climate.ac_amber]
         min_run_minutes: 1
-        min_off_minutes: 1
+        # Keep +12m well inside the changeover delay. A one-minute delay
+        # may legitimately expire before that sampled observation.
+        min_off_minutes: 3
         shared_ac_control: true
         night_cooling_members: [climate.ac_master_bedroom, climate.ac_alex, climate.ac_amber]
   rooms:

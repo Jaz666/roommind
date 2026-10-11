@@ -1,0 +1,90 @@
+name: reusable-household-schedules
+description: >
+  Two rooms share a reusable Bedrooms schedule created through the real WebSocket
+  API. Bedtime changes both targets, the AC cools with radiator protection, and
+  schedules survive reload. Overrides temporarily take priority, then assignments
+  can return to the existing comfort targets.
+tags: [smoke, household, schedule, ac]
+start: 2026-07-01T21:50
+duration: 45m
+location: {latitude: 51.5, longitude: -0.1, time_zone: Europe/London}
+weather:
+  profile: temperate
+  monthly_mean_c: [18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18]
+  daily_amplitude_c: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  noise_c: 0
+house:
+  building: bestand_teilsaniert
+  outdoor: {sensors: {temperature: sensor.outdoor}}
+  rooms:
+    bedroom:
+      floor_area_m2: 100
+      initial: {temperature: 20.5}
+      devices:
+        - {entity_id: climate.bedroom_ac, profile: generic_split_ac}
+        - {entity_id: climate.bedroom_trv, profile: generic_trv}
+      sensors: {temperature: {entity_id: sensor.bedroom_temp}}
+    guest:
+      floor_area_m2: 100
+      initial: {temperature: 20.5}
+      devices: [{entity_id: climate.guest_trv, profile: generic_trv}]
+      sensors: {temperature: {entity_id: sensor.guest_temp}}
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor
+    control_mode: bangbang
+    compressor_groups:
+      - id: bedroom
+        name: Bedroom outdoor unit
+        members: [climate.bedroom_ac]
+        min_run_minutes: 1
+        min_off_minutes: 1
+        shared_ac_control: true
+        night_cooling_members: [climate.bedroom_ac]
+  rooms:
+    bedroom:
+      devices: [{entity_id: climate.bedroom_ac, type: ac}, {entity_id: climate.bedroom_trv, type: trv}]
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: auto
+      comfort_heat: 21
+      comfort_cool: 24
+    guest:
+      devices: [{entity_id: climate.guest_trv, type: trv}]
+      temperature_sensor: sensor.guest_temp
+      climate_mode: heat_only
+      comfort_heat: 21
+      comfort_cool: 24
+timeline:
+  - at: "+1m"
+    do: roommind.ws
+    type: roommind/schedules/save
+    name: Bedrooms
+    revision: 0
+    area_ids: [bedroom, guest]
+    days:
+      monday: &bedroom_day
+        - {from: "00:00", to: "07:00", data: {heat_temperature: 19, cool_temperature: 19.5}}
+        - {from: "07:00", to: "22:00", data: {heat_temperature: 20, cool_temperature: 21}}
+        - {from: "22:00", to: "24:00", data: {heat_temperature: 19, cool_temperature: 19.5}}
+      tuesday: *bedroom_day
+      wednesday: *bedroom_day
+      thursday: *bedroom_day
+      friday: *bedroom_day
+      saturday: *bedroom_day
+      sunday: *bedroom_day
+  - {at: "+12m", do: roommind.reload}
+  - {at: "+20m", do: roommind.ws, type: roommind/override/set, area_id: guest, override_type: custom, heat: 22, duration: 0.05}
+  - {at: "+30m", do: roommind.ws, type: roommind/rooms/save, area_id: guest, roommind_schedule_id: ""}
+expect:
+  - {invariant: no_heat_and_cool_same_group}
+  - {check: "room.bedroom.heat_target == 20", at: "+5m", label: reusable daytime target replaces room comfort}
+  - {check: "room.guest.heat_target == 20", at: "+5m", label: second room follows the same linked schedule}
+  - {check: "room.bedroom.cool_target == 21", at: "+5m", label: separate daytime cooling target}
+  - {check: "room.bedroom.heat_target == 19", at: "+15m", label: bedtime heating target survives reload}
+  - {check: "room.bedroom.cool_target == 19.5", at: "+15m", label: bedtime cooling target survives reload}
+  - {check: "room.guest.heat_target == 19", at: "+15m", label: bedtime changes both assigned rooms}
+  - {check: "dev('climate.bedroom_ac').mode == 'cool'", at: "+15m", label: bedroom AC follows scheduled cooling demand}
+  - {check: "dev('climate.bedroom_trv').mode == 'off'", at: "+15m", label: radiator protected while scheduled AC cools}
+  - {check: "room.guest.heat_target == 22", at: "+21m", label: temporary override takes priority}
+  - {check: "room.guest.heat_target == 19", at: "+25m", label: expired override returns to linked schedule}
+  - {check: "room.guest.heat_target == 21", at: "+35m", label: unassign restores existing comfort target}

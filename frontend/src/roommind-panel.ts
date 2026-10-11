@@ -1,12 +1,14 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, HassArea, RoomConfig } from "./types";
+import type { HomeAssistant, HassArea, RoomConfig, ScheduleChoice } from "./types";
 import { getEntitiesForArea } from "./utils/room-state";
 import { loadHaElements } from "./load-ha-elements";
 import { localize } from "./utils/localize";
 import { mdiEyeOff } from "./utils/icons";
 import "./components/rs-settings";
 import "./components/rs-analytics";
+import "./components/rs-reusable-schedules";
+import type { RsReusableSchedules } from "./components/rs-reusable-schedules";
 
 const BACK_PATH = "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z";
 
@@ -19,7 +21,7 @@ const CHART_PATH =
 const THERMOMETER_PATH =
   "M15 13V5A3 3 0 0 0 9 5V13A5 5 0 1 0 15 13M12 4A1 1 0 0 1 13 5V8H11V5A1 1 0 0 1 12 4Z";
 
-type TabId = "areas" | "analytics" | "settings";
+type TabId = "areas" | "analytics" | "schedules" | "settings";
 
 interface AreaInfo {
   area: HassArea;
@@ -37,6 +39,7 @@ export class RoomMindPanel extends LitElement {
 
   @state() private _activeTab: TabId = "areas";
   @state() private _rooms: Record<string, RoomConfig> = {};
+  @state() private _scheduleChoices: ScheduleChoice[] = [];
   @state() private _roomsLoaded = false;
   @state() private _selectedAreaId: string | null = null;
   @state() private _analyticsRoom = "";
@@ -388,6 +391,7 @@ export class RoomMindPanel extends LitElement {
       areas: localize("panel.tab.rooms", l),
       analytics: localize("tabs.analytics", l),
       settings: localize("panel.tab.settings", l),
+      schedules: localize("weekly.title", l),
     };
 
     return html`
@@ -466,6 +470,12 @@ export class RoomMindPanel extends LitElement {
           .controlMode=${this._controlMode}
           @room-selected=${this._onAnalyticsRoomSelected}
         ></rs-analytics>`;
+      case "schedules":
+        return html`<rs-reusable-schedules
+          .hass=${this.hass}
+          .rooms=${this._rooms}
+          @schedules-updated=${this._onRoomUpdated}
+        ></rs-reusable-schedules>`;
       case "settings":
         return this._renderSettings();
       default:
@@ -486,6 +496,8 @@ export class RoomMindPanel extends LitElement {
           <rs-room-detail
             .area=${area}
             .config=${config}
+            .scheduleChoices=${this._scheduleChoices}
+            @open-schedules=${() => this._onTabClicked("schedules")}
             .hass=${this.hass}
             .presenceEnabled=${this._presenceEnabled}
             .presencePersons=${this._presencePersons}
@@ -779,6 +791,7 @@ export class RoomMindPanel extends LitElement {
     try {
       const result = await this.hass.callWS<{
         rooms: Record<string, RoomConfig>;
+        reusable_schedules: ScheduleChoice[];
         vacation_active: boolean;
         vacation_temp: number | null;
         vacation_until: number | null;
@@ -801,6 +814,7 @@ export class RoomMindPanel extends LitElement {
         type: "roommind/rooms/list",
       });
       this._rooms = result.rooms;
+      this._scheduleChoices = result.reusable_schedules ?? [];
       this._vacationActive = result.vacation_active ?? false;
       this._vacationTemp = result.vacation_temp ?? null;
       this._vacationUntil = result.vacation_until ?? null;
@@ -855,6 +869,8 @@ export class RoomMindPanel extends LitElement {
   }
 
   private _onTabClicked(tab: TabId) {
+    const editor = this.shadowRoot?.querySelector<RsReusableSchedules>("rs-reusable-schedules");
+    if (tab !== this._activeTab && editor && !editor.canLeave()) return;
     this._activeTab = tab;
     this._selectedAreaId = null;
     if (tab === "areas") {
@@ -1045,6 +1061,9 @@ export class RoomMindPanel extends LitElement {
       this._activeTab = "analytics";
       this._selectedAreaId = null;
       this._analyticsRoom = "";
+    } else if (path === "/schedules") {
+      this._activeTab = "schedules";
+      this._selectedAreaId = null;
     } else if (path === "/settings") {
       this._activeTab = "settings";
       this._selectedAreaId = null;

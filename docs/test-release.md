@@ -1,8 +1,10 @@
-# Household beta installation and rollback — 1.7.9b3
+# Household beta installation and rollback — 1.7.9b4
 
-This experimental prerelease adds opt-in shared Toshiba direction coordination
-on top of the cooling protection tested in beta 2. Existing rooms retain their
-behaviour until the new group setting is enabled.
+This experimental prerelease adds a reusable schedule editor and linked room
+assignments, retaining the shared Toshiba coordination from beta 3. Existing
+rooms continue using their helpers until a reusable schedule is assigned.
+Start with [reusable-schedules.md](reusable-schedules.md) before continuing any
+additional room trials.
 
 Before installing, make a Home Assistant backup and download it. Also preserve
 an exact copy of `/config/custom_components/roommind` outside `custom_components`
@@ -11,7 +13,7 @@ Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
 
 ## Install
 
-Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b3**, install it,
+Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b4**, install it,
 and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
 update can overwrite the fork. Do not delete the configured RoomMind integration;
 the domain is still `roommind`, preserving rooms and settings.
@@ -25,7 +27,14 @@ The panel URL includes the version to refresh its code after upgrades. If the
 normal browser still shows an older panel, try a private window or hard refresh.
 Check your rooms, schedules and sensor selections before enabling new control.
 
-## Choose the trial
+## Set up schedules first
+
+Open **RoomMind → Schedules**, create or import Living Room, Downstairs and
+Bedrooms, review their weekly blocks, then assign rooms. You can save all three
+without room assignments first. See [the schedule guide](reusable-schedules.md).
+Keep the current AC device configuration while doing this.
+
+## Resume AC trials later
 
 - To continue radiator-only protection while Toshiba is independently controlled,
   keep the AC out of controlled Devices and follow [cooling protection](cooling-interlock.md).
@@ -35,6 +44,10 @@ Check your rooms, schedules and sensor selections before enabling new control.
   for the first live trial. Keep the other ACs off initially.
 
 ## Roll back
+
+Before returning to beta 3 or earlier, restore **Home Assistant helpers / constant
+comfort** as the Schedule source in every room. Preserve a HA backup containing
+the new schedule library: older versions do not preserve it when writing storage.
 
 Stop Toshiba cooling first. Remove ACs from controlled Devices before returning
 to beta 2, which does not coordinate shared requested modes. Keep Tado devices,

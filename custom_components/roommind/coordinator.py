@@ -752,18 +752,25 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             read_schedule_blocks,
         )
 
-        schedule_entity_id = get_active_schedule_entity(self.hass, room)
+        schedule_entity_id = None if room.get("roommind_schedule_id") else get_active_schedule_entity(self.hass, room)
         schedule_blocks = (
             await read_schedule_blocks(self.hass, schedule_entity_id, cache=self._schedule_blocks_cache)
             if schedule_entity_id
             else None
         )
 
+        if room.get("roommind_schedule_id"):
+            reusable = self.hass.data[DOMAIN]["store"].get_schedules().get(room["roommind_schedule_id"])
+            schedule_blocks = reusable["days"] if reusable else None
+            schedule_entity_id = None
+
         # Scan the whole week for unusable block temps so the panel can flag a
         # typo in a block that is not running right now (#395). Only the active
         # schedule is loaded, so a typo in a deselected schedule surfaces once
         # that schedule is picked.
-        schedule_temp_warnings = find_rejected_block_temps(schedule_blocks, partial(ha_temp_to_celsius, self.hass))
+        schedule_temp_warnings = find_rejected_block_temps(
+            schedule_blocks, None if room.get("roommind_schedule_id") else partial(ha_temp_to_celsius, self.hass)
+        )
 
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
@@ -1879,7 +1886,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Returns -1 if there are no schedules.
         """
 
-        return resolve_schedule_index(self.hass, room)
+        return -1 if room.get("roommind_schedule_id") else resolve_schedule_index(self.hass, room)
 
     def _warn_block_temp_rejected(self, area_id: str, field: str, raw: Any) -> None:
         """Log a rejected schedule block temperature once per distinct value.
@@ -1978,6 +1985,24 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         comfort_cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
         eco_heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
         eco_cool = room.get("eco_cool", DEFAULT_ECO_COOL)
+
+        if room.get("roommind_schedule_id"):
+            from .utils.schedule_utils import resolve_targets_at_time
+
+            return resolve_targets_at_time(
+                time.time(),
+                schedule_blocks,
+                None,
+                None,
+                None,
+                None,
+                None,
+                comfort_heat,
+                comfort_cool,
+                eco_heat,
+                eco_cool,
+                schedule_off_action=settings.get("schedule_off_action", "eco"),
+            )
 
         # schedule_entity_id is pre-resolved by the caller (_async_process_room) to avoid
         # a second resolve_schedule_index() call that could diverge if selector state changes.

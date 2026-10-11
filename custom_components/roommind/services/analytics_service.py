@@ -16,6 +16,7 @@ from ..const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DOMAIN,
 )
 from ..control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
@@ -108,8 +109,12 @@ async def _compute_target_forecast(
 
     presence_away = not room.get("ignore_presence", False) and is_presence_away(hass, room, settings)
 
-    entity_id = get_active_schedule_entity(hass, room)
+    entity_id = None if room.get("roommind_schedule_id") else get_active_schedule_entity(hass, room)
     schedule_blocks = await read_schedule_blocks(hass, entity_id, cache=schedule_blocks_cache) if entity_id else None
+
+    if room.get("roommind_schedule_id"):
+        reusable = hass.data[DOMAIN]["store"].get_schedules().get(room["roommind_schedule_id"])
+        schedule_blocks = reusable["days"] if reusable else None
 
     _hass = hass
     converter = lambda v: ha_temp_to_celsius(_hass, v)  # noqa: E731
@@ -133,7 +138,7 @@ async def _compute_target_forecast(
             eco_heat,
             eco_cool,
             presence_away=presence_away,
-            block_temp_converter=converter,
+            block_temp_converter=None if room.get("roommind_schedule_id") else converter,
             presence_away_action=settings.get("presence_away_action", "eco"),
             schedule_off_action=settings.get("schedule_off_action", "eco"),
             presence_clears_override=bool(settings.get("presence_clears_override", False)),

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
+from functools import partial
 from typing import TYPE_CHECKING
 
 import voluptuous as vol
@@ -42,6 +44,7 @@ from .utils.device_utils import (
     SETPOINT_OFFSET_MAX,
     SETPOINT_OFFSET_MIN,
 )
+from .utils.reusable_schedule import import_helper_blocks, schedule_summary, validate_schedule
 from .utils.schedule_utils import mask_override_band, override_preset_band
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,6 +98,7 @@ _ROOM_SAVE_FIELDS = (
     "cooling_interlock_deadband",
     "schedules",
     "schedule_selector_entity",
+    "roommind_schedule_id",
     "window_sensors",
     "window_open_delay",
     "window_close_delay",
@@ -242,12 +246,18 @@ async def websocket_list_rooms(
     settings = store.get_settings()
     learning_disabled = set(settings.get("learning_disabled_rooms", []))
 
+    reusable_schedules = store.get_schedules()
+    summaries = {sid: schedule_summary(schedule, time.time()) for sid, schedule in reusable_schedules.items()}
+
     # Build response: config + live state per room
     # Override fields are computed from the store (always up-to-date) rather
     # than from the coordinator (which refreshes on a 10s cycle).
     result = {}
     for area_id, room_config in rooms.items():
         room_data = dict(room_config)
+        schedule_id = room_config.get("roommind_schedule_id", "")
+        room_data["roommind_schedule"] = summaries.get(schedule_id)
+        room_data["roommind_schedule_missing"] = bool(schedule_id and schedule_id not in reusable_schedules)
         live = live_states.get(area_id, {})
         # Managed Mode rooms (no temperature_sensor) never train the EKF, so
         # surfacing "learning paused" would be misleading.
@@ -313,6 +323,9 @@ async def websocket_list_rooms(
         msg["id"],
         {
             "rooms": result,
+            "reusable_schedules": [
+                {"id": sid, "name": schedule["name"]} for sid, schedule in reusable_schedules.items()
+            ],
             "outdoor_temp": coordinator.outdoor_temp_effective if coordinator else None,
             "outdoor_humidity": coordinator.outdoor_humidity if coordinator else None,
             "vacation_active": vacation_active,
@@ -385,6 +398,7 @@ async def websocket_list_rooms(
         vol.Optional("cooling_interlock_deadband"): vol.All(vol.Coerce(float), vol.Range(min=0, max=2)),
         vol.Optional("schedules"): [{vol.Required("entity_id"): str}],
         vol.Optional("schedule_selector_entity"): str,
+        vol.Optional("roommind_schedule_id"): str,
         vol.Optional("window_sensors"): [str],
         vol.Optional("window_open_delay"): vol.Coerce(int),
         vol.Optional("window_close_delay"): vol.Coerce(int),
@@ -442,6 +456,19 @@ async def websocket_save_room(
     for key in _ROOM_SAVE_FIELDS:
         if key in msg:
             config[key] = msg[key]
+
+    if config.get("is_outdoor"):
+        config["roommind_schedule_id"] = ""
+    if (
+        config.get("roommind_schedule_id")
+        and (store.get_room(area_id) or {}).get("is_outdoor")
+        and not ("is_outdoor" in config and not config["is_outdoor"])
+    ):
+        connection.send_error(msg["id"], "invalid_schedule", "Choose an indoor room for this schedule.")
+        return
+    if config.get("roommind_schedule_id") and config["roommind_schedule_id"] not in store.get_schedules():
+        connection.send_error(msg["id"], "invalid_schedule", "This RoomMind schedule no longer exists.")
+        return
 
     # Reject RoomMind's own entities to prevent self-assignment (#86)
     own_prefix = f"{DOMAIN}_"
@@ -520,6 +547,7 @@ async def websocket_delete_room(
         vol.Optional("heat"): vol.Coerce(float),
         vol.Optional("cool"): vol.Coerce(float),
         vol.Optional("duration"): vol.Coerce(float),  # hours (omit or 0 for permanent)
+        vol.Optional("until_next_change"): bool,
     }
 )
 @websocket_api.async_response
@@ -555,6 +583,14 @@ async def websocket_override_set(
         return
 
     override_until = (time.time() + duration_hours * 3600) if duration_hours else None
+    if msg.get("until_next_change"):
+        schedule = store.get_schedules().get(room.get("roommind_schedule_id"))
+        override_until = schedule_summary(schedule, time.time())["next_change"] if schedule else None
+        if override_until is None:
+            connection.send_error(
+                msg["id"], "invalid", "Choose a timed override: this room has no upcoming RoomMind schedule change."
+            )
+            return
 
     await store.async_update_room(
         area_id,
@@ -1019,8 +1055,103 @@ async def websocket_covers_clear_override(
 
 
 @callback
+@websocket_api.websocket_command({vol.Required("type"): "roommind/schedules/list"})
+@websocket_api.async_response
+async def websocket_list_schedules(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+    """List reusable schedules and their linked room assignments."""
+    store = hass.data[DOMAIN]["store"]
+    schedules = store.get_schedules()
+    rooms = store.get_rooms()
+    for schedule_id, schedule in schedules.items():
+        schedule["area_ids"] = [
+            area_id for area_id, room in rooms.items() if room.get("roommind_schedule_id") == schedule_id
+        ]
+    connection.send_result(msg["id"], {"schedules": schedules})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "roommind/schedules/save",
+        vol.Optional("schedule_id", default=""): str,
+        vol.Required("name"): str,
+        vol.Required("days"): dict,
+        vol.Required("area_ids"): [str],
+        vol.Required("revision"): vol.All(int, vol.Range(min=0)),
+    }
+)
+@websocket_api.async_response
+async def websocket_save_schedule(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+    """Validate and atomically save a reusable schedule and assignments."""
+    store = hass.data[DOMAIN]["store"]
+    try:
+        schedule = validate_schedule(msg["name"], msg["days"])
+        schedule_id = msg.get("schedule_id") or uuid.uuid4().hex
+        if msg.get("schedule_id") and schedule_id not in store.get_schedules():
+            raise ValueError("This schedule no longer exists. Reload the schedule list.")
+        saved = await store.async_save_schedule(schedule_id, schedule, msg["area_ids"], msg["revision"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_schedule", str(err))
+        return
+    coordinator = _get_coordinator(hass)
+    if coordinator:
+        await coordinator.async_request_refresh()
+    connection.send_result(msg["id"], {"schedule": saved})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "roommind/schedules/delete",
+        vol.Required("schedule_id"): str,
+        vol.Required("revision"): vol.All(int, vol.Range(min=1)),
+    }
+)
+@websocket_api.async_response
+async def websocket_delete_schedule(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+    """Delete a schedule only once all rooms have been unassigned."""
+    try:
+        await hass.data[DOMAIN]["store"].async_delete_schedule(msg["schedule_id"], msg["revision"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_schedule", str(err))
+        return
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "roommind/schedules/import",
+        vol.Required("entity_id"): str,
+        vol.Required("fallback_heat"): vol.Coerce(float),
+        vol.Required("fallback_cool"): vol.Coerce(float),
+    }
+)
+@websocket_api.async_response
+async def websocket_import_schedule(hass: HomeAssistant, connection: ActiveConnection, msg: dict) -> None:
+    """Read an HA helper into an unassigned draft; do not modify the helper."""
+    from .utils.schedule_utils import read_schedule_blocks
+    from .utils.temp_utils import ha_temp_to_celsius
+
+    blocks = await read_schedule_blocks(hass, msg["entity_id"])
+    state = hass.states.get(msg["entity_id"])
+    if blocks is None:
+        connection.send_error(msg["id"], "invalid_schedule", "Cannot read that Home Assistant schedule helper.")
+        return
+    name = state.attributes.get("friendly_name", msg["entity_id"]) if state else msg["entity_id"]
+    try:
+        draft = import_helper_blocks(
+            name, blocks, msg["fallback_heat"], msg["fallback_cool"], partial(ha_temp_to_celsius, hass)
+        )
+    except (ValueError, KeyError, TypeError, AttributeError) as err:
+        connection.send_error(msg["id"], "invalid_schedule", str(err))
+        return
+    connection.send_result(msg["id"], {"schedule": {**draft, "id": "", "revision": 0, "area_ids": []}})
+
+
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register all RoomMind WebSocket commands."""
+    websocket_api.async_register_command(hass, websocket_import_schedule)
+    websocket_api.async_register_command(hass, websocket_list_schedules)
+    websocket_api.async_register_command(hass, websocket_save_schedule)
+    websocket_api.async_register_command(hass, websocket_delete_schedule)
     websocket_api.async_register_command(hass, websocket_list_rooms)
     websocket_api.async_register_command(hass, websocket_save_room)
     websocket_api.async_register_command(hass, websocket_delete_room)

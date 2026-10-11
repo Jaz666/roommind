@@ -14,6 +14,26 @@ export interface NotificationTarget {
   notify_when: "always" | "home_only";
 }
 
+export interface WeeklyBlock {
+  from: string;
+  to: string;
+  data: { heat_temperature: number; cool_temperature: number };
+}
+export interface ScheduleChoice {
+  id: string;
+  name: string;
+}
+export interface ReusableSchedule extends ScheduleChoice {
+  revision: number;
+  days: Record<string, WeeklyBlock[]>;
+  area_ids: string[];
+}
+export interface ScheduleSummary extends ScheduleChoice {
+  targets: WeeklyBlock["data"] | null;
+  next_change: number | null;
+  next_targets: WeeklyBlock["data"] | null;
+}
+
 export interface ScheduleEntry {
   entity_id: string;
 }
@@ -125,6 +145,9 @@ export interface RoomConfig {
   cooling_interlock_delay?: number;
   cooling_interlock_deadband?: number;
   schedules: ScheduleEntry[];
+  roommind_schedule_id?: string;
+  roommind_schedule?: ScheduleSummary | null;
+  roommind_schedule_missing?: boolean;
   schedule_selector_entity: string;
   comfort_temp?: number;
   eco_temp?: number;
@@ -224,7 +247,7 @@ export interface HomeAssistant {
   entities: Record<string, HassEntityRegistryEntry>;
   devices: Record<string, HassDeviceRegistryEntry>;
   language: string;
-  config: { unit_system: { temperature: string } };
+  config: { unit_system: { temperature: string }; time_zone?: string };
   connection?: HassConnection;
 }
 

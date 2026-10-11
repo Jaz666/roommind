@@ -55,6 +55,7 @@ async def test_room_config_has_cover_defaults():
     store = RoomMindStore.__new__(RoomMindStore)
     store._store = MagicMock()
     store._data = {}
+    store._schedules = {}
     store._settings = {}
     store._thermal_data = {}
     store._store.async_save = AsyncMock()

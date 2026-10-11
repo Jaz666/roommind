@@ -42,8 +42,14 @@ def find_active_block(schedule_blocks: dict, ts: float) -> dict[str, Any] | None
         from_raw = block.get("from", "00:00:00")
         to_raw = block.get("to", "00:00:00")
         from_time = from_raw if hasattr(from_raw, "hour") else datetime.strptime(str(from_raw), "%H:%M:%S").time()
-        to_time = to_raw if hasattr(to_raw, "hour") else datetime.strptime(str(to_raw), "%H:%M:%S").time()
-        if from_time <= current_time < to_time:
+        to_time = (
+            to_raw
+            if hasattr(to_raw, "hour")
+            else datetime.strptime(
+                "00:00:00" if str(to_raw) in ("24:00", "24:00:00") else str(to_raw), "%H:%M:%S"
+            ).time()
+        )
+        if from_time <= current_time and (str(to_raw) in ("24:00", "24:00:00") or current_time < to_time):
             return dict(block.get("data", {}))
     return None
 
@@ -396,7 +402,7 @@ def make_target_resolver(
     presence_clears_override = bool(settings.get("presence_clears_override", False))
 
     converter: Callable[[float], float] | None = None
-    if hass is not None:
+    if hass is not None and not room.get("roommind_schedule_id"):
         from .temp_utils import ha_temp_to_celsius
 
         _hass = hass
