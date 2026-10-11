@@ -52,6 +52,7 @@ class SharedACManager:
             for item in prepared:
                 if not item.get("prepared") or not item["commandable"]:
                     continue
+                urgent_stop.update(set(item.get("stop_entities", set())) & members)
                 for eid in members & set(get_ac_eids(item["room"].get("devices", []))):
                     owned.add(eid)
                     if item.get("stop_immediately"):

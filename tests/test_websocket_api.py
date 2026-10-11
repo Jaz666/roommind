@@ -3149,3 +3149,37 @@ async def test_shared_ac_settings_round_trip(ws_hass, store, connection):
     )
     saved = connection.send_result.call_args[0][1]["settings"]["compressor_groups"][0]
     assert saved["shared_ac_control"] and saved["night_cooling_members"] == ["climate.ac_bedroom"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"ac_off_peak_start": "05:00", "ac_off_peak_end": "05:00"},
+        {"ac_morning_boost_rooms": ["missing"]},
+    ],
+)
+async def test_invalid_tariff_settings_rejected_without_save(ws_hass, store, connection, changes):
+    await store.async_load()
+    await _save_settings(ws_hass, connection, {"id": 1, "type": "roommind/settings/save", **changes})
+    assert connection.send_error.call_args.args[1] == "invalid_tariff"
+    assert not store.get_settings().get("ac_tariff_enabled")
+
+
+async def test_tariff_settings_round_trip_and_zero_bias(ws_hass, store, connection):
+    await store.async_load()
+    await store.async_save_room(
+        "living", {"devices": [{"type": "ac", "entity_id": "climate.ac"}], "temperature_sensor": "sensor.temp"}
+    )
+    settings = {
+        "ac_tariff_enabled": True,
+        "ac_off_peak_start": "00:00",
+        "ac_off_peak_end": "05:00",
+        "ac_morning_boost_enabled": True,
+        "ac_morning_boost_minutes": 30,
+        "ac_morning_boost_offset": 0.0,
+        "ac_morning_boost_rooms": ["living"],
+    }
+    await _save_settings(ws_hass, connection, {"id": 1, "type": "roommind/settings/save", **settings})
+    connection.send_error.assert_not_called()
+    for key, value in settings.items():
+        assert store.get_settings()[key] == value

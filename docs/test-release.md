@@ -1,10 +1,10 @@
-# Household beta installation and rollback — 1.7.9b4
+# Household beta installation and rollback — 1.7.9b5
 
-This experimental prerelease adds a reusable schedule editor and linked room
-assignments, retaining the shared Toshiba coordination from beta 3. Existing
-rooms continue using their helpers until a reusable schedule is assigned.
-Start with [reusable-schedules.md](reusable-schedules.md) before continuing any
-additional room trials.
+This experimental prerelease adds a fixed-GMT AC heating tariff and bounded
+morning preparation, retaining reusable schedules and shared Toshiba control.
+Enable the new features in Settings after installation; both start disabled.
+Follow [the tariff guide](heating-tariff.md), and use
+[reusable schedules](reusable-schedules.md) to define morning room targets.
 
 Before installing, make a Home Assistant backup and download it. Also preserve
 an exact copy of `/config/custom_components/roommind` outside `custom_components`
@@ -13,7 +13,7 @@ Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
 
 ## Install
 
-Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b4**, install it,
+Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b5**, install it,
 and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
 update can overwrite the fork. Do not delete the configured RoomMind integration;
 the domain is still `roommind`, preserving rooms and settings.

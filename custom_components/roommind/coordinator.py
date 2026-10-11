@@ -71,7 +71,8 @@ from .managers.compressor_group_manager import (
 from .managers.cooling_interlock import CoolingInterlock
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.ekf_training_manager import EkfTrainingManager
-from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
+from .managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan, evaluate_heat_sources
+from .managers.heating_tariff import HeatingTariffManager
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
 from .managers.shared_ac_manager import SharedACManager
@@ -190,6 +191,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Heat source orchestration state (per room)
         self._heat_source_states: dict[str, str] = {}
         self._cooling_interlock = CoolingInterlock(hass)
+        self._heating_tariff = HeatingTariffManager()
+        self._heating_tariff_loaded = False
+        self._saved_tariff_boost_state: dict = {}
         self._shared_ac = SharedACManager(hass)
         self._shared_ac_loaded = False
         self._saved_shared_ac_state: dict = {}
@@ -242,6 +246,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Read outdoor sensors from global settings
         settings = store.get_settings()
+        if not self._heating_tariff_loaded:
+            self._saved_tariff_boost_state = settings.get("ac_tariff_boost_state", {})
+            self._heating_tariff.state = copy.deepcopy(self._saved_tariff_boost_state)
+            self._heating_tariff_loaded = True
+        self._heating_tariff.state = {aid: value for aid, value in self._heating_tariff.state.items() if aid in rooms}
         if not self._cooling_interlock_loaded:
             self._saved_cooling_interlock_state = settings.get("cooling_interlock_state", {})
             self._cooling_interlock.load_state(self._saved_cooling_interlock_state)
@@ -348,6 +357,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("Room '%s': processing failed, skipping", area_id)
 
+        if self._heating_tariff.state != self._saved_tariff_boost_state:
+            await store.async_save_settings({"ac_tariff_boost_state": self._heating_tariff.state})
+            self._saved_tariff_boost_state = copy.deepcopy(self._heating_tariff.state)
         if self._shared_ac.state != self._saved_shared_ac_state:
             await store.async_save_settings({"shared_ac_state": self._shared_ac.state})
             self._saved_shared_ac_state = copy.deepcopy(self._shared_ac.state)
@@ -803,6 +815,21 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mold_prevention_delta=mold_prevention_temp_delta,
         )
 
+        normal_resolver = target_resolver
+        tariff = self._heating_tariff.evaluate(
+            room,
+            settings,
+            time.time(),
+            targets,
+            normal_resolver,
+            current_temp,
+            presence_away=presence_away,
+        )
+        targets = tariff.targets_at(time.time(), targets)
+
+        def tariff_resolver(ts: float) -> TargetTemps:
+            return tariff.targets_at(ts, normal_resolver(ts))
+
         # --- Compute residual heat from previous cycle state ---
         system_type = room.get("heating_system_type", "")
         q_residual = self._residual_tracker.get_q_residual(
@@ -826,9 +853,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # unavailable/unknown/off → skip (conservative: no occupancy heat)
 
         # Determine and apply mode with MPC controller
+        control_room = room
+        if tariff.heating_locked or tariff.boost_target is not None:
+            control_room = {
+                **room,
+                "devices": [
+                    {**device, "idle_action": "off"}
+                    if device.get("type") == "ac" and device.get("idle_action") not in ("off", "fan_only")
+                    else device
+                    for device in room.get("devices", [])
+                ],
+            }
         controller = MPCController(
             self.hass,
-            room,
+            control_room,
             model_manager=self._model_manager,
             outdoor_temp=self.outdoor_temp_effective,
             outdoor_forecast=outdoor_forecast,
@@ -836,7 +874,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             previous_mode=self._previous_modes.get(area_id, MODE_IDLE),
             mode_on_since=self._mode_on_since.get(area_id),
             has_external_sensor=has_external_sensor,
-            target_resolver=target_resolver,
+            target_resolver=tariff_resolver,
             q_solar=self._current_q_solar,
             latitude=self.hass.config.latitude,
             longitude=self.hass.config.longitude,
@@ -847,6 +885,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_occupancy=q_occupancy,
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, targets)
+        if (
+            tariff.boost_target is not None
+            and current_temp is not None
+            and targets.heat is not None
+            and current_temp >= targets.heat
+            and mode == MODE_HEATING
+        ):
+            mode, power_fraction = MODE_IDLE, 0.0
 
         # Compute effective single target_temp for display/history (mode + climate_mode aware)
         climate_mode = room.get("climate_mode", "auto")
@@ -1007,6 +1053,63 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # so re-enabling starts fresh.
             self._heat_source_states.pop(area_id, None)
 
+        tariff_stop = {
+            eid
+            for eid in get_ac_eids(room.get("devices", []))
+            if tariff.heating_locked
+            and (state := self.hass.states.get(eid)) is not None
+            and state.state in ("heat", "heat_cool", "auto")
+        }
+        # Group members without a usable external sensor remain unowned.
+        tariff_stop -= shared_members - shared_owned
+        boost_reached = (
+            tariff.boost_target is not None and current_temp is not None and current_temp >= tariff.boost_target
+        )
+        if boost_reached:
+            tariff_stop.update(
+                eid
+                for eid in get_ac_eids(room.get("devices", []))
+                if (state := self.hass.states.get(eid)) is not None and state.state == "heat"
+            )
+        tariff_stop -= shared_members - shared_owned
+        tariff_excluded = (
+            set(get_ac_eids(room.get("devices", []))) if tariff.heating_locked and mode == MODE_HEATING else set()
+        )
+        if mode == MODE_HEATING and (tariff.heating_locked or tariff.boost_target is not None):
+            trvs = [
+                eid
+                for eid in get_trv_eids(room.get("devices", []))
+                if (state := self.hass.states.get(eid)) is not None and state.state not in ("unknown", "unavailable")
+            ]
+            acs = [
+                eid
+                for eid in get_ac_eids(room.get("devices", []))
+                if (state := self.hass.states.get(eid)) is not None and state.state not in ("unknown", "unavailable")
+            ]
+            can_boost_ac = (
+                not tariff.heating_locked
+                and check_acs_can_heat(self.hass, room)
+                and (
+                    self.outdoor_temp_effective is None
+                    or self.outdoor_temp_effective >= room.get("heat_source_ac_min_outdoor", -15)
+                )
+            )
+            use_ac = bool(tariff.boost_target is not None and can_boost_ac and acs)
+            commands = [
+                DeviceCommand(eid, "primary", "thermostat", not use_ac, power_fraction if not use_ac else 0.0, "tariff")
+                for eid in trvs
+            ]
+            commands.extend(
+                DeviceCommand(eid, "secondary", "ac", use_ac, power_fraction if use_ac else 0.0, "tariff")
+                for eid in acs
+            )
+            heat_source_plan = HeatSourcePlan(
+                commands,
+                "secondary" if use_ac else "primary" if trvs else "none",
+                "off_peak_boost" if use_ac else "peak_tariff",
+            )
+            self._heat_source_states[area_id] = heat_source_plan.active_sources
+
         ac_request = mode
         if heat_source_plan is not None and not any(
             cmd.active and cmd.device_type == "ac" for cmd in heat_source_plan.commands
@@ -1018,6 +1121,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "mode": ac_request,
             "commandable": climate_active and not waiting_for_data and has_external_sensor,
             "stop_immediately": window_open or force_off,
+            "stop_entities": tariff_stop,
         }
         planned_acs = (
             None
@@ -1039,6 +1143,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if eid in self._shared_ac.decisions and eid in self._shared_ac.decisions[eid].hold
         }
         interlock_excluded: set[str] = set()
+        if climate_active:
+            for eid in tariff_stop:
+                await async_turn_off_climate(self.hass, eid, area_id=area_id)
+        if mode != MODE_COOLING:
+            tariff_excluded.update(tariff_stop)
         if cooling_block_reason is not None:
             interlock_excluded.update(get_trv_eids(room.get("devices", [])))
             if mode != MODE_COOLING:
@@ -1052,8 +1161,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # If the shared outdoor unit cannot heat, gas radiators remain usable
         # even when the normal source selector preferred the heat pump.
         if heat_source_plan is not None and mode == MODE_HEATING and shared_blocked:
-            from .managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan
-
             trvs = [
                 eid
                 for eid in get_trv_eids(room.get("devices", []))
@@ -1138,7 +1245,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 compressor_forced_off.add(eid)
             if eid in decision.hold and eid not in compressor_forced_off:
                 compressor_forced_on.add(eid)
-        compressor_forced_on -= compressor_forced_off
+        compressor_forced_off.update(tariff_excluded)
+        compressor_forced_off.update(tariff_stop)
+        compressor_forced_on -= compressor_forced_off | tariff_stop
         relevant = set(get_ac_eids(room.get("devices", []))) if mode == MODE_COOLING else set(all_device_eids)
         if relevant and (compressor_forced_off | shared_blocked) >= relevant:
             mode = MODE_IDLE
@@ -1172,7 +1281,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             commandable=climate_active and not waiting_for_data,
             compressor_forced_on=compressor_forced_on,
             compressor_forced_off=compressor_forced_off,
-            exclude_eids=cycling_eids | interlock_excluded | shared_blocked | shared_unowned,
+            exclude_eids=cycling_eids | interlock_excluded | shared_blocked | shared_unowned | tariff_excluded,
             force_off=force_off,
             can_activate=self._compressor_manager.check_can_activate,
         )
@@ -1195,11 +1304,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     targets,
                     power_fraction=power_fraction,
                     current_temp=current_temp,
-                    exclude_eids=cycling_eids | coil_dry.controlled_eids | interlock_excluded | shared_unowned,
+                    exclude_eids=cycling_eids
+                    | coil_dry.controlled_eids
+                    | interlock_excluded
+                    | shared_unowned
+                    | tariff_excluded,
                     heating_boost_target=device_max_temp,
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
                     heat_source_plan=heat_source_plan,
+                    ac_boost_offset=settings.get("ac_morning_boost_offset", 3.0)
+                    if tariff.boost_target is not None and mode == MODE_HEATING
+                    else None,
                     compressor_forced_on=compressor_forced_on or None,
                     compressor_forced_off=compressor_forced_off or None,
                     force_off=force_off,
@@ -1354,6 +1470,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             compressor_protection_reason=compressor_protection_reason,
             coil_dry=coil_dry,
         )
+        result["ac_tariff_status"] = tariff.status
+        result["ac_heating_locked"] = tariff.heating_locked
+        result["ac_boost_target"] = tariff.boost_target
+        result["ac_boost_until"] = tariff.boost_until
         result["heating_blocked_by_cooling"] = cooling_block_reason is not None
         result["cooling_interlock_reason"] = cooling_block_reason
         result["shared_ac_waiting_reason"] = (

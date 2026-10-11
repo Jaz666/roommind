@@ -558,6 +558,26 @@ export class RsHeroStatus extends LitElement {
                               }
                             </span>
                             ${
+                              this.climateControlActive &&
+                              this.config?.climate_control_enabled !== false &&
+                              live.ac_tariff_status
+                                ? html`<span
+                                    class="mode-pill mode-other"
+                                    role="status"
+                                    title=${localize(
+                                      live.ac_tariff_status === "boost"
+                                        ? "tariff.boost_hint"
+                                        : live.ac_tariff_status === "warmth_hold"
+                                          ? "tariff.hold_hint"
+                                          : "tariff.peak_hint",
+                                      this.hass.language,
+                                    )}
+                                  >
+                                    ${localize(live.ac_tariff_status === "boost" ? "tariff.boost_badge" : live.ac_tariff_status === "warmth_hold" ? "tariff.hold_badge" : "tariff.peak", this.hass.language)}
+                                  </span>`
+                                : nothing
+                            }
+                            ${
                               live.shared_ac_waiting_reason &&
                               this.climateControlActive &&
                               this.config?.climate_control_enabled !== false

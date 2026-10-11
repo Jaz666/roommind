@@ -19,6 +19,7 @@ import "./settings/rs-settings-panel";
 import "./settings/rs-settings-general";
 import "./settings/rs-settings-sensors";
 import "./settings/rs-settings-control";
+import "./settings/rs-settings-tariff";
 import "./settings/rs-settings-presence";
 import "./settings/rs-settings-vacation";
 import "./settings/rs-settings-valve";
@@ -73,6 +74,13 @@ export class RsSettings extends LitElement {
   @state() private _coilDryMinCoolingMinutes = 10;
   @state() private _coilDryDrainMinutes = 0;
   @state() private _boostAppliedAt: Record<string, number> = {};
+  @state() private _acTariffEnabled = false;
+  @state() private _acOffPeakStart = "00:00";
+  @state() private _acOffPeakEnd = "05:00";
+  @state() private _acMorningBoostEnabled = false;
+  @state() private _acMorningBoostMinutes = 30;
+  @state() private _acMorningBoostOffset = 3;
+  @state() private _acMorningBoostRooms: string[] = [];
   @state() private _loaded = false;
 
   private _saveDebounce?: ReturnType<typeof setTimeout>;
@@ -129,6 +137,13 @@ export class RsSettings extends LitElement {
       this._moldPreventionEnabled = s.mold_prevention_enabled ?? false;
       this._moldPreventionIntensity = s.mold_prevention_intensity ?? "medium";
       this._moldPreventionNotify = s.mold_prevention_notify_enabled ?? false;
+      this._acTariffEnabled = s.ac_tariff_enabled ?? false;
+      this._acOffPeakStart = s.ac_off_peak_start ?? "00:00";
+      this._acOffPeakEnd = s.ac_off_peak_end ?? "05:00";
+      this._acMorningBoostEnabled = s.ac_morning_boost_enabled ?? false;
+      this._acMorningBoostMinutes = s.ac_morning_boost_minutes ?? 30;
+      this._acMorningBoostOffset = s.ac_morning_boost_offset ?? 3;
+      this._acMorningBoostRooms = s.ac_morning_boost_rooms ?? [];
       this._compressorGroups = s.compressor_groups ?? [];
       this._coilDryEnabled = s.coil_dry_enabled ?? false;
       this._coilDryMinutes = s.coil_dry_minutes ?? 20;
@@ -196,6 +211,25 @@ export class RsSettings extends LitElement {
           .scheduleOffAction=${this._scheduleOffAction}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-control>
+      </rs-settings-panel>
+
+      <rs-settings-panel
+        icon="mdi:cash-clock"
+        .heading=${localize("tariff.title", l)}
+        .intro=${localize("tariff.intro", l)}
+      >
+        <rs-settings-tariff
+          .hass=${this.hass}
+          .rooms=${this.rooms}
+          .acTariffEnabled=${this._acTariffEnabled}
+          .acOffPeakStart=${this._acOffPeakStart}
+          .acOffPeakEnd=${this._acOffPeakEnd}
+          .acMorningBoostEnabled=${this._acMorningBoostEnabled}
+          .acMorningBoostMinutes=${this._acMorningBoostMinutes}
+          .acMorningBoostOffset=${this._acMorningBoostOffset}
+          .acMorningBoostRooms=${this._acMorningBoostRooms}
+          @setting-changed=${this._onSettingChanged}
+        ></rs-settings-tariff>
       </rs-settings-panel>
 
       <rs-settings-panel
@@ -400,6 +434,20 @@ export class RsSettings extends LitElement {
         schedule_off_action: this._scheduleOffAction,
         valve_protection_enabled: this._valveProtectionEnabled,
         valve_protection_interval_days: this._valveProtectionInterval,
+        ac_tariff_enabled: this._acTariffEnabled,
+        ac_off_peak_start: this._acOffPeakStart,
+        ac_off_peak_end: this._acOffPeakEnd,
+        ac_morning_boost_enabled: this._acMorningBoostEnabled,
+        ac_morning_boost_minutes: this._acMorningBoostMinutes,
+        ac_morning_boost_offset: this._acMorningBoostOffset,
+        ac_morning_boost_rooms: this._acMorningBoostRooms.filter(
+          (id) =>
+            this.rooms[id] &&
+            !this.rooms[id].is_outdoor &&
+            this.rooms[id].temperature_sensor &&
+            this.rooms[id].climate_mode !== "cool_only" &&
+            this.rooms[id].devices?.some((d) => d.type === "ac"),
+        ),
         compressor_groups: this._compressorGroups.filter((g) => g.members.length > 0),
         coil_dry_enabled: this._coilDryEnabled,
         coil_dry_minutes: this._coilDryMinutes,

@@ -74,6 +74,10 @@ export interface RoomLiveData {
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
+  ac_tariff_status?: "peak" | "boost" | "warmth_hold" | null;
+  ac_heating_locked?: boolean;
+  ac_boost_target?: number | null;
+  ac_boost_until?: number | null;
   shared_ac_waiting_reason?: string | null;
   heating_blocked_by_cooling?: boolean;
   cooling_interlock_reason?: "cooling" | "recovery" | "cooling_status_unknown" | null;
@@ -189,6 +193,13 @@ export interface RoomConfig {
 }
 
 export interface GlobalSettings {
+  ac_tariff_enabled?: boolean;
+  ac_off_peak_start?: string;
+  ac_off_peak_end?: string;
+  ac_morning_boost_enabled?: boolean;
+  ac_morning_boost_minutes?: number;
+  ac_morning_boost_offset?: number;
+  ac_morning_boost_rooms?: string[];
   outdoor_temp_sensor: string;
   outdoor_humidity_sensor: string;
   outdoor_cooling_min?: number;

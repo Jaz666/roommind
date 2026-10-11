@@ -156,6 +156,13 @@ _SETTINGS_SAVE_FIELDS = (
     "presence_away_action",
     "presence_clears_override",
     "schedule_off_action",
+    "ac_tariff_enabled",
+    "ac_off_peak_start",
+    "ac_off_peak_end",
+    "ac_morning_boost_enabled",
+    "ac_morning_boost_minutes",
+    "ac_morning_boost_offset",
+    "ac_morning_boost_rooms",
     "valve_protection_enabled",
     "valve_protection_interval_days",
     "coil_dry_enabled",
@@ -304,6 +311,10 @@ async def websocket_list_rooms(
             "learning_paused_reason": learning_paused_reason,
             "heating_blocked_by_cooling": live.get("heating_blocked_by_cooling", False),
             "cooling_interlock_reason": live.get("cooling_interlock_reason"),
+            "ac_tariff_status": live.get("ac_tariff_status"),
+            "ac_heating_locked": live.get("ac_heating_locked", False),
+            "ac_boost_target": live.get("ac_boost_target"),
+            "ac_boost_until": live.get("ac_boost_until"),
             "shared_ac_waiting_reason": live.get("shared_ac_waiting_reason"),
             "compressor_protection_active": live.get("compressor_protection_active", False),
             "compressor_protection_reason": live.get("compressor_protection_reason"),
@@ -697,6 +708,13 @@ async def websocket_get_settings(
         vol.Optional("presence_persons"): [str],
         vol.Optional("presence_away_action"): vol.In(["eco", "off"]),
         vol.Optional("presence_clears_override"): bool,
+        vol.Optional("ac_tariff_enabled"): bool,
+        vol.Optional("ac_off_peak_start"): vol.Match(r"^(?:[01]\d|2[0-3]):[0-5]\d$"),
+        vol.Optional("ac_off_peak_end"): vol.Match(r"^(?:[01]\d|2[0-3]):[0-5]\d$"),
+        vol.Optional("ac_morning_boost_enabled"): bool,
+        vol.Optional("ac_morning_boost_minutes"): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+        vol.Optional("ac_morning_boost_offset"): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+        vol.Optional("ac_morning_boost_rooms"): [str],
         vol.Optional("schedule_off_action"): vol.In(["eco", "off"]),
         vol.Optional("valve_protection_enabled"): bool,
         vol.Optional("valve_protection_interval_days"): vol.All(vol.Coerce(int), vol.Range(min=1, max=90)),
@@ -763,6 +781,26 @@ async def websocket_save_settings(
     for key in _SETTINGS_SAVE_FIELDS:
         if key in msg:
             changes[key] = msg[key]
+
+    effective = {**store.get_settings(), **changes}
+    if effective.get("ac_off_peak_start", "00:00") == effective.get("ac_off_peak_end", "05:00"):
+        connection.send_error(msg["id"], "invalid_tariff", "Off-peak start and end must differ.")
+        return
+    for area_id in changes.get("ac_morning_boost_rooms", []):
+        room = store.get_room(area_id)
+        if (
+            room is None
+            or room.get("is_outdoor")
+            or not room.get("temperature_sensor")
+            or room.get("climate_mode") == "cool_only"
+            or not any(d.get("type") == "ac" for d in room.get("devices", []))
+        ):
+            connection.send_error(
+                msg["id"],
+                "invalid_tariff",
+                "Morning boost needs a configured indoor AC room with an external temperature sensor.",
+            )
+            return
 
     # Validate compressor groups
     groups = changes.get("compressor_groups")
