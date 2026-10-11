@@ -1,0 +1,100 @@
+name: household-shared-ac
+description: >
+  A shared Toshiba-style group changes from daytime heating priority to bedroom
+  cooling priority at 22:00 BST. Gas remains usable downstairs. Changeover must
+  survive a reload and no group may heat and cool simultaneously.
+tags: [smoke, household, ac, compressor]
+start: 2026-07-01T21:50
+duration: 45m
+location: {latitude: 51.5, longitude: -0.1, time_zone: Europe/London}
+weather:
+  profile: temperate
+  monthly_mean_c: [18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18]
+  daily_amplitude_c: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  noise_c: 0
+house:
+  building: bestand_teilsaniert
+  outdoor: {sensors: {temperature: sensor.outdoor}}
+  rooms:
+    living:
+      floor_area_m2: 100
+      initial: {temperature: 18}
+      devices:
+        - {entity_id: climate.ac_living_room, profile: generic_split_ac}
+        - {entity_id: climate.tado_living_room, profile: generic_trv}
+      sensors: {temperature: {entity_id: sensor.living_temp}}
+    bedroom:
+      floor_area_m2: 100
+      initial: {temperature: 25}
+      devices:
+        - {entity_id: climate.ac_master_bedroom, profile: generic_split_ac}
+        - {entity_id: climate.tado_master_bedroom, profile: generic_trv}
+      sensors: {temperature: {entity_id: sensor.bedroom_temp}}
+    alex:
+      floor_area_m2: 30
+      initial: {temperature: 20}
+      devices: [{entity_id: climate.ac_alex, profile: generic_split_ac}]
+      sensors: {temperature: {entity_id: sensor.alex_temp}}
+    amber:
+      floor_area_m2: 30
+      initial: {temperature: 20}
+      devices: [{entity_id: climate.ac_amber, profile: generic_split_ac}]
+      sensors: {temperature: {entity_id: sensor.amber_temp}}
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor
+    control_mode: bangbang
+    compressor_groups:
+      - id: toshiba
+        name: Toshiba shared outdoor unit
+        members: [climate.ac_living_room, climate.ac_master_bedroom, climate.ac_alex, climate.ac_amber]
+        min_run_minutes: 1
+        min_off_minutes: 1
+        shared_ac_control: true
+        night_cooling_members: [climate.ac_master_bedroom, climate.ac_alex, climate.ac_amber]
+  rooms:
+    living:
+      devices: [{entity_id: climate.ac_living_room, type: ac}, {entity_id: climate.tado_living_room, type: trv}]
+      temperature_sensor: sensor.living_temp
+      climate_mode: heat_only
+      comfort_heat: 21
+      eco_heat: 21
+      heat_source_orchestration: true
+    bedroom:
+      devices: [{entity_id: climate.ac_master_bedroom, type: ac}, {entity_id: climate.tado_master_bedroom, type: trv}]
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: auto
+      comfort_heat: 19
+      eco_heat: 19
+      comfort_cool: 21
+      eco_cool: 21
+    alex:
+      devices: [{entity_id: climate.ac_alex, type: ac}]
+      temperature_sensor: sensor.alex_temp
+      comfort_heat: 19
+      eco_heat: 19
+      comfort_cool: 24
+      eco_cool: 24
+    amber:
+      devices: [{entity_id: climate.ac_amber, type: ac}]
+      temperature_sensor: sensor.amber_temp
+      comfort_heat: 19
+      eco_heat: 19
+      comfort_cool: 24
+      eco_cool: 24
+timeline:
+  - {at: "+11m", do: roommind.reload}
+  - {at: "+25m", do: entity.unavailable, entity_id: climate.ac_amber}
+  - {at: "+30m", do: entity.available, entity_id: climate.ac_amber}
+expect:
+  - {invariant: no_heat_and_cool_same_group}
+  - {check: "dev('climate.ac_living_room').mode == 'heat'", at: "+5m", label: daytime heating wins conflict}
+  - {check: "dev('climate.ac_master_bedroom').mode == 'off'", at: "+5m", label: conflicting bedroom AC stays off}
+  - {check: "dev('climate.ac_living_room').mode == 'off'", at: "+12m", label: old heating direction remains off through reload and changeover}
+  - {check: "dev('climate.ac_master_bedroom').mode == 'off'", at: "+12m", label: new direction waits through changeover}
+  - {check: "dev('climate.ac_master_bedroom').mode == 'cool'", at: "+15m", label: bedroom cooling wins at 22 BST after reload}
+  - {check: "dev('climate.tado_living_room').mode == 'heat'", at: "+15m", label: gas heats downstairs while group cools}
+  - {check: "dev('climate.tado_master_bedroom').mode == 'off'", at: "+15m", label: bedroom radiator cannot heat during cooling}
+  - {check: "dev('climate.ac_alex').mode == 'off'", at: "+15m", label: unit without demand remains off}
+  - {check: "room.bedroom.shared_ac_waiting_reason == 'unknown_status'", at: "+26m", label: unavailable group member prevents new direction}
+  - {check: "dev('climate.ac_master_bedroom').mode == 'cool'", at: "+35m", label: cooling resumes after known status and delay}

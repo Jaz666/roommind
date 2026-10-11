@@ -294,6 +294,7 @@ async def websocket_list_rooms(
             "learning_paused_reason": learning_paused_reason,
             "heating_blocked_by_cooling": live.get("heating_blocked_by_cooling", False),
             "cooling_interlock_reason": live.get("cooling_interlock_reason"),
+            "shared_ac_waiting_reason": live.get("shared_ac_waiting_reason"),
             "compressor_protection_active": live.get("compressor_protection_active", False),
             "compressor_protection_reason": live.get("compressor_protection_reason"),
             "coil_dry_active": live.get("coil_dry_active", False),
@@ -708,6 +709,8 @@ async def websocket_get_settings(
                 vol.Optional("conflict_resolution", default=DEFAULT_CONFLICT_RESOLUTION): vol.In(CONFLICT_RESOLUTIONS),
                 vol.Optional("action_script", default=""): str,
                 vol.Optional("enforce_uniform_mode", default=False): bool,
+                vol.Optional("shared_ac_control", default=False): bool,
+                vol.Optional("night_cooling_members", default=[]): [str],
             }
         ],
     }
@@ -754,6 +757,20 @@ async def websocket_save_settings(
                 "A climate entity cannot be in multiple compressor groups",
             )
             return
+
+        for group in groups:
+            if group.get("shared_ac_control") and (
+                group.get("master_entity") or group.get("action_script") or group.get("enforce_uniform_mode")
+            ):
+                connection.send_error(
+                    msg["id"], "shared_ac_conflict", "Shared AC control replaces master/uniform-mode control"
+                )
+                return
+            if not set(group.get("night_cooling_members", [])) <= set(group["members"]):
+                connection.send_error(
+                    msg["id"], "invalid_night_member", "Night priority units must belong to their group"
+                )
+                return
 
         # Validate master_entity and action_script fields
         all_masters: list[str] = []

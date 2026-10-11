@@ -3093,3 +3093,58 @@ async def test_override_preset_resolves_to_band_per_climate_mode(
 
     room = store.get_room("bed")
     assert (room["override_heat"], room["override_cool"]) == expected
+
+
+@pytest.mark.parametrize(
+    "invalid,error",
+    [
+        ({"master_entity": "climate.master"}, "shared_ac_conflict"),
+        ({"enforce_uniform_mode": True}, "shared_ac_conflict"),
+        ({"action_script": "script.mode"}, "shared_ac_conflict"),
+        ({"night_cooling_members": ["climate.other"]}, "invalid_night_member"),
+    ],
+)
+async def test_shared_ac_settings_reject_competing_controllers(ws_hass, store, connection, invalid, error):
+    await store.async_load()
+    await _save_settings(
+        ws_hass,
+        connection,
+        {
+            "id": 20,
+            "type": "roommind/settings/save",
+            "compressor_groups": [
+                {
+                    "id": "toshiba",
+                    "name": "Toshiba",
+                    "members": ["climate.ac_bedroom"],
+                    "shared_ac_control": True,
+                    **invalid,
+                }
+            ],
+        },
+    )
+    assert connection.send_error.call_args[0][1] == error
+    connection.send_result.assert_not_called()
+
+
+async def test_shared_ac_settings_round_trip(ws_hass, store, connection):
+    await store.async_load()
+    await _save_settings(
+        ws_hass,
+        connection,
+        {
+            "id": 20,
+            "type": "roommind/settings/save",
+            "compressor_groups": [
+                {
+                    "id": "toshiba",
+                    "name": "Toshiba",
+                    "members": ["climate.ac_bedroom"],
+                    "shared_ac_control": True,
+                    "night_cooling_members": ["climate.ac_bedroom"],
+                }
+            ],
+        },
+    )
+    saved = connection.send_result.call_args[0][1]["settings"]["compressor_groups"][0]
+    assert saved["shared_ac_control"] and saved["night_cooling_members"] == ["climate.ac_bedroom"]

@@ -90,9 +90,9 @@ to revert this feature; existing room/device configuration stays intact.
 
 ## Following stages
 
-This change does not yet provide shared Toshiba outdoor-unit mode arbitration,
+Beta 3 adds opt-in [shared Toshiba outdoor-unit mode arbitration](shared-ac-control.md).
+The standalone cooling-interlock feature does not provide
 tariff selection, morning recovery/preheating, or background radiator flow.
-Those are separate changes to validate before putting all Toshiba units under
-RoomMind Full Control. A Sonoff closing-degree limit manually reduced below full
+Tariff and background-flow changes remain separate from the shared-unit trial. A Sonoff closing-degree limit manually reduced below full
 closure can permit background flow even with the thermostat off; this first stage
 does not write those number entities.

@@ -189,88 +189,132 @@ export class RsSettingsCompressor extends LitElement {
           </div>
         </div>
 
-        <div class="section-label">${localize("compressor.master_entity", l)}</div>
-        <ha-entity-picker
-          .hass=${this.hass}
-          .value=${group.master_entity || ""}
-          .includeDomains=${["climate"]}
-          .entityFilter=${this._masterFilter}
-          @value-changed=${(e: CustomEvent) => {
-            this._updateGroup(idx, "master_entity", (e.detail?.value as string) ?? "");
-          }}
-        ></ha-entity-picker>
-        <div class="field-hint">${localize("compressor.master_entity_hint", l)}</div>
-
         <div class="field-row">
-          <ha-formfield .label=${localize("compressor.enforce_uniform_mode", l)}>
+          <ha-formfield .label=${localize("shared_ac.enable", l)}>
             <ha-switch
-              .checked=${group.enforce_uniform_mode || false}
+              .checked=${group.shared_ac_control ?? false}
               @change=${(e: Event) => {
-                this._updateGroup(
-                  idx,
-                  "enforce_uniform_mode",
-                  (e.target as HTMLInputElement).checked,
-                );
+                const enabled = (e.target as HTMLInputElement).checked;
+                const updated = { ...group, shared_ac_control: enabled };
+                if (enabled) {
+                  updated.master_entity = "";
+                  updated.action_script = "";
+                  updated.enforce_uniform_mode = false;
+                }
+                this._fire(this.compressorGroups.map((g, i) => (i === idx ? updated : g)));
               }}
             ></ha-switch>
           </ha-formfield>
-          <div class="field-hint">${localize("compressor.enforce_uniform_mode_hint", l)}</div>
+          <div class="field-hint">${localize("shared_ac.hint", l)}</div>
         </div>
-
         ${
-          group.master_entity || group.enforce_uniform_mode
+          group.shared_ac_control
             ? html`
+                <div class="section-label">${localize("shared_ac.night_members", l)}</div>
+                <div class="field-hint">${localize("shared_ac.night_hint", l)}</div>
+                ${group.members.map(
+                  (eid) => html`
+                    <ha-formfield .label=${this.hass.states[eid]?.attributes.friendly_name ?? eid}>
+                      <ha-checkbox
+                        .checked=${group.night_cooling_members?.includes(eid) ?? false}
+                        @change=${(e: Event) => {
+                          const selected = new Set(group.night_cooling_members ?? []);
+                          if ((e.target as HTMLInputElement).checked) selected.add(eid);
+                          else selected.delete(eid);
+                          this._updateGroup(idx, "night_cooling_members", [...selected]);
+                        }}
+                      ></ha-checkbox>
+                    </ha-formfield>
+                  `,
+                )}
+              `
+            : html`
+                <div class="section-label">${localize("compressor.master_entity", l)}</div>
+                <ha-entity-picker
+                  .hass=${this.hass}
+                  .value=${group.master_entity || ""}
+                  .includeDomains=${["climate"]}
+                  .entityFilter=${this._masterFilter}
+                  @value-changed=${(e: CustomEvent) => {
+                    this._updateGroup(idx, "master_entity", (e.detail?.value as string) ?? "");
+                  }}
+                ></ha-entity-picker>
+                <div class="field-hint">${localize("compressor.master_entity_hint", l)}</div>
+
                 <div class="field-row">
-                  <ha-select
-                    .label=${localize("compressor.conflict_resolution", l)}
-                    .value=${group.conflict_resolution || "heating_priority"}
-                    .options=${[
-                      {
-                        value: "heating_priority",
-                        label: localize("compressor.conflict_heating_priority", l),
-                      },
-                      {
-                        value: "cooling_priority",
-                        label: localize("compressor.conflict_cooling_priority", l),
-                      },
-                      {
-                        value: "majority",
-                        label: localize("compressor.conflict_majority", l),
-                      },
-                      {
-                        value: "outdoor_temp",
-                        label: localize("compressor.conflict_outdoor_temp", l),
-                      },
-                    ]}
-                    @selected=${(e: Event) => {
-                      const v = getSelectValue(e);
-                      if (v) this._updateGroup(idx, "conflict_resolution", v);
-                    }}
-                    @closed=${(e: Event) => e.stopPropagation()}
-                    fixedMenuPosition
-                    style="width: 100%;"
-                  >
-                  </ha-select>
+                  <ha-formfield .label=${localize("compressor.enforce_uniform_mode", l)}>
+                    <ha-switch
+                      .checked=${group.enforce_uniform_mode || false}
+                      @change=${(e: Event) => {
+                        this._updateGroup(
+                          idx,
+                          "enforce_uniform_mode",
+                          (e.target as HTMLInputElement).checked,
+                        );
+                      }}
+                    ></ha-switch>
+                  </ha-formfield>
                   <div class="field-hint">
-                    ${localize("compressor.conflict_resolution_hint", l)}
+                    ${localize("compressor.enforce_uniform_mode_hint", l)}
                   </div>
                 </div>
-              `
-            : nothing
-        }
 
-        <div class="field-row">
-          <ha-entity-picker
-            .hass=${this.hass}
-            .value=${group.action_script || ""}
-            .includeDomains=${["script"]}
-            .label=${localize("compressor.action_script", l)}
-            @value-changed=${(e: CustomEvent) => {
-              this._updateGroup(idx, "action_script", (e.detail?.value as string) ?? "");
-            }}
-          ></ha-entity-picker>
-          <div class="field-hint">${localize("compressor.action_script_hint", l)}</div>
-        </div>
+                ${
+                  group.master_entity || group.enforce_uniform_mode
+                    ? html`
+                        <div class="field-row">
+                          <ha-select
+                            .label=${localize("compressor.conflict_resolution", l)}
+                            .value=${group.conflict_resolution || "heating_priority"}
+                            .options=${[
+                              {
+                                value: "heating_priority",
+                                label: localize("compressor.conflict_heating_priority", l),
+                              },
+                              {
+                                value: "cooling_priority",
+                                label: localize("compressor.conflict_cooling_priority", l),
+                              },
+                              {
+                                value: "majority",
+                                label: localize("compressor.conflict_majority", l),
+                              },
+                              {
+                                value: "outdoor_temp",
+                                label: localize("compressor.conflict_outdoor_temp", l),
+                              },
+                            ]}
+                            @selected=${(e: Event) => {
+                              const v = getSelectValue(e);
+                              if (v) this._updateGroup(idx, "conflict_resolution", v);
+                            }}
+                            @closed=${(e: Event) => e.stopPropagation()}
+                            fixedMenuPosition
+                            style="width: 100%;"
+                          >
+                          </ha-select>
+                          <div class="field-hint">
+                            ${localize("compressor.conflict_resolution_hint", l)}
+                          </div>
+                        </div>
+                      `
+                    : nothing
+                }
+
+                <div class="field-row">
+                  <ha-entity-picker
+                    .hass=${this.hass}
+                    .value=${group.action_script || ""}
+                    .includeDomains=${["script"]}
+                    .label=${localize("compressor.action_script", l)}
+                    @value-changed=${(e: CustomEvent) => {
+                      this._updateGroup(idx, "action_script", (e.detail?.value as string) ?? "");
+                    }}
+                  ></ha-entity-picker>
+                  <div class="field-hint">${localize("compressor.action_script_hint", l)}</div>
+                </div>
+              `
+        }
 
         <div class="delete-row">
           <rs-confirm-button
@@ -307,6 +351,9 @@ export class RsSettingsCompressor extends LitElement {
             updated[groupIdx] = {
               ...updated[groupIdx],
               members: updated[groupIdx].members.filter((m) => m !== entityId),
+              night_cooling_members: updated[groupIdx].night_cooling_members?.filter(
+                (m) => m !== entityId,
+              ),
             };
             this._fire(updated);
           }}

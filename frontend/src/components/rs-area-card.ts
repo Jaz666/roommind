@@ -94,6 +94,8 @@ export class RsAreaCard extends LitElement {
       /* Header row: name + badge */
       .card-header {
         display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
         align-items: center;
         justify-content: space-between;
       }
@@ -448,6 +450,19 @@ export class RsAreaCard extends LitElement {
                           : nothing
                       }
                     </span>
+                    ${
+                      live.shared_ac_waiting_reason &&
+                      this.climateControlActive &&
+                      this.config?.climate_control_enabled !== false
+                        ? html`<span
+                            class="mode-pill mode-other"
+                            role="status"
+                            title=${localize("shared_ac.waiting_hint", this.hass.language)}
+                          >
+                            ${localize("shared_ac.waiting", this.hass.language)}
+                          </span>`
+                        : nothing
+                    }
                   `
                 : nothing
             }

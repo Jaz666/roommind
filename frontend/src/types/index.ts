@@ -54,6 +54,7 @@ export interface RoomLiveData {
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
+  shared_ac_waiting_reason?: string | null;
   heating_blocked_by_cooling?: boolean;
   cooling_interlock_reason?: "cooling" | "recovery" | "cooling_status_unknown" | null;
   compressor_protection_active: boolean;
@@ -104,6 +105,8 @@ export interface CompressorGroup {
   conflict_resolution: ConflictResolution;
   action_script: string;
   enforce_uniform_mode: boolean;
+  shared_ac_control?: boolean;
+  night_cooling_members?: string[];
 }
 
 export interface RoomConfig {

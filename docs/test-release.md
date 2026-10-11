@@ -1,111 +1,54 @@
-# Household cooling-interlock trial: 1.7.9b2
+# Household beta installation and rollback — 1.7.9b3
 
-This is an experimental prerelease of the household fork. It adds opt-in radiator
-heating protection for independently controlled AC units. Shared Toshiba mode
-arbitration and tariff-based heating are not included yet.
+This experimental prerelease adds opt-in shared Toshiba direction coordination
+on top of the cooling protection tested in beta 2. Existing rooms retain their
+behaviour until the new group setting is enabled.
 
-## Before installing
+Before installing, make a Home Assistant backup and download it. Also preserve
+an exact copy of `/config/custom_components/roommind` outside `custom_components`
+if your configuration-file access allows it. Record your installed version.
+Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
 
-1. Check the Home Assistant version. The repository declares **2026.5.0 or later**
-   as its minimum supported version. The package was tested in HA 2026.10.0.
-2. Record the currently installed RoomMind version.
-3. Make a Home Assistant backup, and download it to another machine. Also copy
-   the existing `/config/custom_components/roommind` directory somewhere outside
-   `custom_components` if you have access to the configuration files. This copy
-   preserves your exact installed code and panel for rollback.
-4. Keep the Toshiba units out of RoomMind's controlled-device lists. Keep each
-   room's current Tado devices and independent temperature sensor unchanged.
+## Install
 
-The integration domain remains `roommind`: replace the existing integration,
-do not try to install a second copy alongside it.
+Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b3**, install it,
+and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
+update can overwrite the fork. Do not delete the configured RoomMind integration;
+the domain is still `roommind`, preserving rooms and settings.
 
-## Install the test package manually
+Alternatively, extract the verified release asset `roommind.zip`, replacing
+`/config/custom_components/roommind` with its contents. The ZIP root contains
+`manifest.json` and `frontend/roommind-panel.js`. GitHub's automatic source ZIP
+is not an installation asset because it lacks the generated panel. Restart HA.
 
-Use the verified `roommind.zip` asset for **1.7.9b2**. It contains `manifest.json`,
-Python modules, and `frontend/roommind-panel.js` at its root; it does not contain
-an enclosing `custom_components` directory.
+The panel URL includes the version to refresh its code after upgrades. If the
+normal browser still shows an older panel, try a private window or hard refresh.
+Check your rooms, schedules and sensor selections before enabling new control.
 
-1. Extract the ZIP to a temporary directory on your own machine and confirm the
-   manifest version is `1.7.9b2`.
-2. Replace `/config/custom_components/roommind` with the extracted directory's
-   contents, using your existing configuration-file access (SSH/Samba/Studio Code
-   Server, for example). Keep the backup outside `custom_components`.
-3. Restart Home Assistant. A full restart ensures the new Python code is loaded.
-4. Reload the RoomMind browser panel. If it displays a version mismatch, refresh
-   its cache and verify that the new JavaScript bundle was installed.
-5. Confirm your existing rooms, schedules, and sensors remain present before
-   enabling the new feature. Leave the other three rooms' monitor lists empty.
+## Choose the trial
 
-If your existing HACS entry tracks upstream, it can overwrite a manually installed
-beta on its next update. Avoid an upstream update during the trial. Switching
-HACS permanently to `Jaz666/roommind` is a separate step after a successful trial.
+- To continue radiator-only protection while Toshiba is independently controlled,
+  keep the AC out of controlled Devices and follow [cooling protection](cooling-interlock.md).
+- To return your bedroom Toshiba to RoomMind control, follow
+  [shared Toshiba setup and trial](shared-ac-control.md). Configure the full
+  outdoor-unit group first, but give RoomMind control of your bedroom AC only
+  for the first live trial. Keep the other ACs off initially.
 
-## Enable protection in your bedroom only
+## Roll back
 
-Open the existing Bedroom One/master-bedroom room in RoomMind. The mapping is:
+Stop Toshiba cooling first. Remove ACs from controlled Devices before returning
+to beta 2, which does not coordinate shared requested modes. Keep Tado devices,
+external sensors and independent cooling monitors as appropriate.
 
-| Role | Home Assistant entity |
-| --- | --- |
-| Cooling monitor | `climate.ac_master_bedroom` |
-| Existing radiator control | `climate.tado_master_bedroom` |
-| Existing room temperature | `sensor.mum_dad_temperature` |
-| Demand feedback to observe | `sensor.mum_dad_heating_power` |
+Restore the exact code/panel directory saved before installation and restart HA,
+or reinstall your previous fork release through HACS. Restore the HA backup if
+configuration needs reversing too. Avoid unrelated household changes during the
+trial so a full backup restore does not discard them.
 
-Under **Heating protection during cooling**, add `climate.ac_master_bedroom` as a
-monitor. Do not add it to the controlled devices. Leave Full Control enabled for
-the room's radiator.
+## Building a release
 
-The initial recovery delay is five minutes. The default recovery margin is 0.3°C;
-use **0.1°C** for the initial household trial, given your sensitivity to temperature
-swings. The margin only gates radiator heating after cooling has stopped: with a
-19°C heating target, a 0.1°C margin requires a reading **below 18.9°C**, and the
-five-minute delay must also have passed. It does not request cooling to 18.9°C or
-change your normal 19°C target. Do not deliberately cool below your comfort range
-just to force heating to resume.
-
-## Observe one normal bedtime cooling period
-
-1. Note the external room temperature, RoomMind heating target, and Tado demand.
-2. Start cooling through the Toshiba app as you normally would. Use explicit
-   **Cool**, rather than **Auto**, for this trial.
-3. Confirm Home Assistant reports `climate.ac_master_bedroom` in `cool` mode.
-4. Confirm RoomMind reports **Cooling protection** in the main status and **Heating blocked: cooling mode selected** in the protection card and the
-   Tado heating target/mode is lowered/off. Watch demand fall and the radiator stop
-   receiving new heat. Warm metal can remain warm after the valve closes.
-5. Verify the Toshiba stays running and other rooms can still request heat.
-6. Stop cooling normally. Observe **Heating recovery** in the main status and the recovery message in the protection card. Heating is eligible again
-   only after the delay and temperature margin; normal room demand then decides
-   whether to heat.
-
-Toshiba reporting, the coordinator refresh, Tado reporting, and the physical valve
-all have delays. The feature is a software control policy, not an instantaneous
-physical guarantee. If demand remains sustained while cooling, or your comfort
-deteriorates, stop the trial rather than tightening settings blindly. An unavailable
-AC or ambiguous Auto mode deliberately blocks heating until status is resolved.
-
-Record timings, external temperatures, Tado demand, and any relevant Home Assistant
-log messages. That evidence will guide tuning before enabling the other rooms.
-
-## Disable or roll back
-
-For a configuration rollback, stop AC cooling first, then remove the monitor from
-the room's **Heating protection during cooling** list. RoomMind returns to its
-previous radiator-control behaviour; the AC remains independently controlled.
-
-For a code rollback, restore the exact integration directory saved before the
-trial, restart Home Assistant, and reload the panel. If configuration was also
-changed unexpectedly, restore the Home Assistant backup. Avoid making other
-household changes during the trial so a full backup restore does not discard them.
-
-## Publish through GitHub when API access is available
-
-The test code belongs on branch `household/cooling-interlock`. In GitHub Releases,
-create a release targeting that branch's tested commit, with tag `v1.7.9b2` and
-**Set as a pre-release** selected. Attach `roommind.zip`; keep it off the latest
-stable release channel. The repository release workflow can also build and upload
-that asset when publishing triggers it. Check that the asset is present before
-attempting an installation.
-
-The environment needs `api.github.com` for release creation and
-`uploads.github.com` for uploading the asset. Existing Git-proxy access does not
-by itself prove GitHub API or write permission.
+A release tag must point to the tested source commit, with the same version in
+`const.py` and `manifest.json`. Publish as a prerelease. GitHub Actions' **Release**
+workflow checks out the tag, builds the frontend and attaches `roommind.zip`.
+Wait for that workflow to succeed and verify the asset before installing through
+HACS. This avoids the cloud environment's direct-upload authentication failure.

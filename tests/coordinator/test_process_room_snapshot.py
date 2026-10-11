@@ -34,6 +34,7 @@ def _setup_coordinator(hass, mock_config_entry, rooms, settings=None):
 NORMAL_ROOM_KEYS = {
     "heating_blocked_by_cooling",
     "cooling_interlock_reason",
+    "shared_ac_waiting_reason",
     "area_id",
     "current_temp",
     "current_temp_raw",

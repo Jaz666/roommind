@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import time
+from collections.abc import AsyncGenerator
 from datetime import timedelta
 from functools import partial
 from typing import Any
@@ -72,6 +74,7 @@ from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
+from .managers.shared_ac_manager import SharedACManager
 from .managers.valve_manager import ValveManager
 from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
@@ -187,6 +190,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Heat source orchestration state (per room)
         self._heat_source_states: dict[str, str] = {}
         self._cooling_interlock = CoolingInterlock(hass)
+        self._shared_ac = SharedACManager(hass)
+        self._shared_ac_loaded = False
+        self._saved_shared_ac_state: dict = {}
         self._cooling_interlock_loaded = False
         self._saved_cooling_interlock_state: dict = {}
         # Track which rooms already have entity platform entities registered
@@ -255,6 +261,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self.outdoor_temp_effective, self.outdoor_temp_source = self._resolve_outdoor_temp(settings)
         self._update_outdoor_unavailable_notification(settings)
 
+        if not self._shared_ac_loaded:
+            self._saved_shared_ac_state = settings.get("shared_ac_state", {})
+            self._shared_ac.state = copy.deepcopy(self._saved_shared_ac_state)
+            self._shared_ac_loaded = True
+
         # Load compressor groups from settings (every cycle, cheap)
         self._compressor_manager.load_groups(settings.get("compressor_groups", []))
 
@@ -295,12 +306,51 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             cloud_coverage,
         )
 
-        for area_id, room in rooms.items():
+        groups = settings.get("compressor_groups", [])
+        if any(g.get("shared_ac_control") for g in groups):
+            # All demand decisions precede all commands: room order cannot pick
+            # the outdoor unit's direction. Suspended generators retain each
+            # room's exact sensor/target/controller snapshot for the apply phase.
+            pending: dict[str, AsyncGenerator[dict, None]] = {}
+            prepared: list[dict] = []
             try:
-                room_state = await self._async_process_room(room, settings, outdoor_forecast)
-                room_states[area_id] = room_state
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Room '%s': processing failed, skipping", area_id)
+                for area_id, room in rooms.items():
+                    steps = self._async_room_steps(room, settings, outdoor_forecast)
+                    try:
+                        item = await anext(steps)
+                        if item.get("prepared"):
+                            pending[area_id] = steps
+                            prepared.append(item)
+                        else:
+                            room_states[area_id] = item
+                            await steps.aclose()
+                    except Exception:  # noqa: BLE001
+                        await steps.aclose()
+                        _LOGGER.exception("Room '%s': preparation failed", area_id)
+                self._shared_ac.resolve(groups, prepared)
+                # Stop the old direction before any room can start a new one.
+                stop = set().union(*(d.stop for d in self._shared_ac.decisions.values()))
+                for eid in sorted(stop):
+                    await async_turn_off_climate(self.hass, eid)
+                for area_id, steps in pending.items():
+                    try:
+                        room_states[area_id] = await anext(steps)
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception("Room '%s': applying control failed", area_id)
+            finally:
+                for steps in pending.values():
+                    await steps.aclose()
+        else:
+            self._shared_ac.decisions = {}
+            for area_id, room in rooms.items():
+                try:
+                    room_states[area_id] = await self._async_process_room(room, settings, outdoor_forecast)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Room '%s': processing failed, skipping", area_id)
+
+        if self._shared_ac.state != self._saved_shared_ac_state:
+            await store.async_save_settings({"shared_ac_state": self._shared_ac.state})
+            self._saved_shared_ac_state = copy.deepcopy(self._shared_ac.state)
 
         # Control master devices based on aggregate room demand
         await self._async_control_master_devices(room_states, rooms, settings)
@@ -622,7 +672,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         return {**room, "override_heat": None, "override_cool": None, "override_until": None, "override_type": None}
 
     async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
-        """Process a single room: read sensor, evaluate schedule, apply control."""
+        """Process one room without shared arbitration (legacy/default path)."""
+        steps = self._async_room_steps(room, settings, outdoor_forecast)
+        try:
+            first = await anext(steps)
+            return await anext(steps) if first.get("prepared") else first
+        finally:
+            await steps.aclose()
+
+    async def _async_room_steps(
+        self, room: dict, settings: dict, outdoor_forecast: list[dict]
+    ) -> AsyncGenerator[dict, None]:
+        """Yield a demand snapshot, then apply control and yield its live result."""
         room = self._without_pending_override_seed(room)
         area_id = room.get("area_id", "unknown")
 
@@ -630,7 +691,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # --- Outdoor room: skip all control logic ---
         if room.get("is_outdoor", False):
-            return {
+            yield {
                 "area_id": area_id,
                 "current_temp": current_temp,
                 "current_temp_raw": current_temp_raw,
@@ -673,6 +734,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "coil_dry_entities": [],
                 "schedule_temp_warnings": [],
             }
+            return
 
         # --- Mold risk calculation ---
         (
@@ -878,30 +940,33 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             eid for eid in get_trv_eids(room.get("devices", [])) if self._valve_manager.is_entity_cycling(eid)
         }
 
+        shared_members = set().union(
+            *(
+                set(group["members"])
+                for group in settings.get("compressor_groups", [])
+                if group.get("shared_ac_control")
+            )
+        )
+        shared_owned = (
+            set(get_ac_eids(room.get("devices", []))) & shared_members
+            if climate_active and not waiting_for_data and has_external_sensor
+            else set()
+        )
+        protected_room = room
+        if shared_owned:
+            protected_room = {
+                **room,
+                "cooling_interlock_entities": sorted(set(room.get("cooling_interlock_entities", [])) | shared_owned),
+            }
         cooling_block_reason = self._cooling_interlock.evaluate(
-            room,
+            protected_room,
             commanded_cooling=mode == MODE_COOLING,
             current_temp=current_temp_raw,
             heat_target=targets.heat,
         )
-        interlock_excluded: set[str] = set()
-        if cooling_block_reason is not None:
-            if mode == MODE_HEATING:
-                mode = MODE_IDLE
-                power_fraction = 0.0
-            interlock_excluded.update(get_trv_eids(room.get("devices", [])))
-            # Keep independently requested cooling running; this monitor does
-            # not take ownership of the AC or cancel the user's app command.
-            if mode != MODE_COOLING:
-                interlock_excluded.update(room.get("cooling_interlock_entities", []))
-            if climate_active:
-                # This must also run during the startup sensor guard: an
-                # unknown room temperature is not a reason to allow heating
-                # against an already known cooling mode.
-                for eid in get_trv_eids(room.get("devices", [])):
-                    await async_turn_off_climate(self.hass, eid, area_id=area_id)
-                self._valve_manager.cancel_cycles(interlock_excluded)
-                cycling_eids -= interlock_excluded
+        if cooling_block_reason is not None and mode == MODE_HEATING:
+            mode = MODE_IDLE
+            power_fraction = 0.0
 
         # Heat source orchestration: smart routing for rooms with both TRVs and ACs
         heat_source_plan = None
@@ -935,6 +1000,69 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # so re-enabling starts fresh.
             self._heat_source_states.pop(area_id, None)
 
+        ac_request = mode
+        if heat_source_plan is not None and not any(
+            cmd.active and cmd.device_type == "ac" for cmd in heat_source_plan.commands
+        ):
+            ac_request = MODE_IDLE
+        yield {
+            "prepared": True,
+            "room": room,
+            "mode": ac_request,
+            "commandable": climate_active and not waiting_for_data and has_external_sensor,
+            "stop_immediately": window_open or force_off,
+        }
+        planned_acs = (
+            None
+            if heat_source_plan is None
+            else {cmd.entity_id for cmd in heat_source_plan.commands if cmd.device_type == "ac" and cmd.active}
+        )
+        shared_blocked = {
+            eid
+            for eid in get_ac_eids(room.get("devices", []))
+            if (planned_acs is None or eid in planned_acs) and self._shared_ac.blocked(eid, mode)
+        }
+        shared_unowned = (set(get_ac_eids(room.get("devices", []))) & shared_members) - shared_owned
+        shared_reason = next(
+            (self._shared_ac.decisions[eid].reason or "other_direction" for eid in sorted(shared_blocked)), None
+        )
+        shared_hold = {
+            eid
+            for eid in shared_owned
+            if eid in self._shared_ac.decisions and eid in self._shared_ac.decisions[eid].hold
+        }
+        interlock_excluded: set[str] = set()
+        if cooling_block_reason is not None:
+            interlock_excluded.update(get_trv_eids(room.get("devices", [])))
+            if mode != MODE_COOLING:
+                interlock_excluded.update(set(room.get("cooling_interlock_entities", [])) - shared_owned)
+            if climate_active:
+                for eid in get_trv_eids(room.get("devices", [])):
+                    await async_turn_off_climate(self.hass, eid, area_id=area_id)
+                self._valve_manager.cancel_cycles(interlock_excluded)
+                cycling_eids -= interlock_excluded
+
+        # If the shared outdoor unit cannot heat, gas radiators remain usable
+        # even when the normal source selector preferred the heat pump.
+        if heat_source_plan is not None and mode == MODE_HEATING and shared_blocked:
+            from .managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan
+
+            trvs = [
+                eid
+                for eid in get_trv_eids(room.get("devices", []))
+                if (state := self.hass.states.get(eid)) is not None and state.state not in ("unknown", "unavailable")
+            ]
+            commands = [
+                DeviceCommand(eid, "primary", "thermostat", True, power_fraction, "shared_ac_fallback") for eid in trvs
+            ]
+            commands.extend(
+                DeviceCommand(cmd.entity_id, cmd.role, cmd.device_type, False, 0.0, "shared_ac_blocked")
+                for cmd in heat_source_plan.commands
+                if cmd.device_type == "ac"
+            )
+            heat_source_plan = HeatSourcePlan(commands, "primary" if trvs else "none", "shared_ac_fallback")
+            self._heat_source_states[area_id] = heat_source_plan.active_sources
+
         # Compressor group constraints
         all_device_eids = get_all_entity_ids(room.get("devices", []))
         compressor_forced_on: set[str] = set()
@@ -952,7 +1080,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         if all_device_eids and climate_active and not window_open and not force_off:
             for eid in all_device_eids:
-                if self._compressor_manager.get_group_for_entity(eid) is None:
+                if self._compressor_manager.get_group_for_entity(eid) is None or eid in self._shared_ac.decisions:
                     continue
                 if mode != MODE_IDLE:
                     if not self._compressor_manager.check_can_activate(eid):
@@ -992,6 +1120,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 power_fraction = 0.0
                 compressor_forced_off.clear()
 
+        # Shared-direction inhibition outranks a compressor minimum-run hold.
+        # The manager itself retains the old direction during its minimum run.
+        compressor_forced_off.update(shared_blocked - shared_hold)
+        for eid in shared_owned:
+            decision = self._shared_ac.decisions.get(eid)
+            if decision is None:
+                continue
+            if eid in decision.stop:
+                compressor_forced_off.add(eid)
+            if eid in decision.hold and eid not in compressor_forced_off:
+                compressor_forced_on.add(eid)
+        compressor_forced_on -= compressor_forced_off
+        relevant = set(get_ac_eids(room.get("devices", []))) if mode == MODE_COOLING else set(all_device_eids)
+        if relevant and (compressor_forced_off | shared_blocked) >= relevant:
+            mode = MODE_IDLE
+            power_fraction = 0.0
+
         # --- Residual heat transition tracking ---
         compressor_forced_on -= interlock_excluded
         compressor_forced_off -= interlock_excluded
@@ -1014,13 +1159,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # it can end phases and hold the pending fan restore.
         coil_dry = await self._coil_dry_manager.async_process_room(
             area_id=area_id,
-            room=room,
+            room={**room, "coil_dry_mode": "fan_only"} if shared_owned else room,
             settings=settings,
             mode=mode,
             commandable=climate_active and not waiting_for_data,
             compressor_forced_on=compressor_forced_on,
             compressor_forced_off=compressor_forced_off,
-            exclude_eids=cycling_eids | interlock_excluded,
+            exclude_eids=cycling_eids | interlock_excluded | shared_blocked | shared_unowned,
             force_off=force_off,
             can_activate=self._compressor_manager.check_can_activate,
         )
@@ -1043,7 +1188,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     targets,
                     power_fraction=power_fraction,
                     current_temp=current_temp,
-                    exclude_eids=cycling_eids | coil_dry.controlled_eids | interlock_excluded,
+                    exclude_eids=cycling_eids | coil_dry.controlled_eids | interlock_excluded | shared_unowned,
                     heating_boost_target=device_max_temp,
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
@@ -1142,7 +1287,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             except Exception:  # noqa: BLE001
                 mpc_active = False
 
-        if cooling_block_reason is not None and current_temp_raw is not None:
+        interlock_skip_training = cooling_block_reason is not None and not (
+            mode == MODE_COOLING
+            and shared_owned
+            and not (set(protected_room.get("cooling_interlock_entities", [])) - shared_owned)
+        )
+        if interlock_skip_training and current_temp_raw is not None:
             self._model_manager.sync_temperature(area_id, current_temp_raw)
 
         display_mode, display_pf = await self._observe_and_train(
@@ -1160,7 +1310,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             has_external_sensor=has_external_sensor,
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
-            coil_dry_skip_training=coil_dry.skip_ekf_training or cooling_block_reason is not None,
+            coil_dry_skip_training=coil_dry.skip_ekf_training or interlock_skip_training,
         )
 
         result = self._build_room_state_dict(
@@ -1199,7 +1349,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
         result["heating_blocked_by_cooling"] = cooling_block_reason is not None
         result["cooling_interlock_reason"] = cooling_block_reason
-        return result
+        result["shared_ac_waiting_reason"] = (
+            "external_sensor_required" if shared_unowned and not has_external_sensor else shared_reason
+        )
+        yield result
 
     async def _observe_and_train(
         self,
