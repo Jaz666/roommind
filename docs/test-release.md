@@ -1,8 +1,9 @@
-# Household beta installation and rollback — 1.7.9b5
+# Household beta installation and rollback — 1.7.9b6
 
-This experimental prerelease adds a fixed-GMT AC heating tariff and bounded
-morning preparation, retaining reusable schedules and shared Toshiba control.
-Enable the new features in Settings after installation; both start disabled.
+This experimental prerelease corrects morning preparation overshoot: it removes
+the extra AC boost offset, stops heating below the scheduled morning target and
+preserves a cooling gap through handover. Existing tariff/boost selections remain
+enabled after upgrading. Review the new 0.2°C stopping margin in Settings.
 Follow [the tariff guide](heating-tariff.md), and use
 [reusable schedules](reusable-schedules.md) to define morning room targets.
 
@@ -13,7 +14,7 @@ Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
 
 ## Install
 
-Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b5**, install it,
+Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b6**, install it,
 and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
 update can overwrite the fork. Do not delete the configured RoomMind integration;
 the domain is still `roommind`, preserving rooms and settings.
@@ -44,6 +45,11 @@ Keep the current AC device configuration while doing this.
   for the first live trial. Keep the other ACs off initially.
 
 ## Roll back
+
+Before returning to beta 5, disable **Prepare morning targets before off-peak
+ends**. Beta 5 can resume using the old saved extra AC offset and does not apply
+the new early-stop margin or constant-schedule cooling handover. The peak heating
+lockout can remain enabled.
 
 Before returning to beta 3 or earlier, restore **Home Assistant helpers / constant
 comfort** as the Schedule source in every room. Preserve a HA backup containing

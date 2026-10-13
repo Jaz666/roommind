@@ -90,3 +90,60 @@ def test_constant_schedule_uses_current_target_and_off_stays_off():
     result = manager.evaluate(ROOM, SETTINGS, now, MORNING, lambda _: MORNING, 18)
     assert result.boost_target == 21 and result.targets_at(now, MORNING) == MORNING
     assert result.targets_at(now, TargetTemps(heat=None, cool=None)) == TargetTemps(heat=None, cool=None)
+
+
+@pytest.mark.parametrize("margin", [0, 0.2, 0.5])
+def test_early_stop_and_restart_hysteresis_survive_repeated_updates(margin):
+    manager = HeatingTariffManager()
+    settings = {**SETTINGS, "ac_morning_boost_stop_margin": margin}
+    now = ts("2026-07-01T04:45:00Z")
+    stop = MORNING.heat - margin
+    result = manager.evaluate(ROOM, settings, now, MORNING, lambda _: MORNING, stop)
+    assert result.heating_paused
+    result = manager.evaluate(ROOM, settings, now + 60, MORNING, lambda _: MORNING, stop - 0.1)
+    assert result.heating_paused
+    result = manager.evaluate(ROOM, settings, now + 120, MORNING, lambda _: MORNING, stop - 0.4)
+    assert not result.heating_paused
+
+
+def test_constant_equal_targets_keep_bounded_cooling_band_after_cutoff():
+    manager = HeatingTariffManager()
+    target = TargetTemps(heat=20, cool=20)
+    manager.evaluate(ROOM, SETTINGS, ts("2026-07-01T04:45:00Z"), target, lambda _: target, 19)
+    cutoff = ts("2026-07-01T05:00:00Z")
+    result = manager.evaluate(ROOM, SETTINGS, cutoff, target, lambda _: target, 20.2)
+    assert result.status == "warmth_hold"
+    assert result.targets_at(cutoff, target) == TargetTemps(heat=20, cool=20.5)
+    expired = manager.evaluate(ROOM, SETTINGS, cutoff + 1800, target, lambda _: target, 20.2)
+    assert expired.targets_at(cutoff + 1800, target) == target
+    assert not manager.state
+
+
+def test_schedule_at_cutoff_keeps_short_handover_even_if_heat_target_unchanged():
+    manager = HeatingTariffManager()
+    now = ts("2026-07-01T04:45:00Z")
+    cutoff = ts("2026-07-01T05:00:00Z")
+
+    def resolver(future):
+        return MORNING if future >= cutoff else NIGHT
+
+    manager.evaluate(ROOM, SETTINGS, now, NIGHT, resolver, 19)
+    result = manager.evaluate(ROOM, SETTINGS, cutoff, MORNING, resolver, 21.2)
+    assert result.status == "warmth_hold"
+    assert result.hold_until == cutoff + 1800
+
+
+def test_legacy_constant_hold_is_upgraded_at_cutoff():
+    manager = HeatingTariffManager()
+    cutoff = ts("2026-07-01T05:00:00Z")
+    manager.state["living"] = {
+        "target": 20,
+        "cool": 20,
+        "boost_until": cutoff,
+        "hold_until": cutoff,
+        "tariff": ["00:00", "05:00"],
+    }
+    target = TargetTemps(heat=20, cool=20)
+    result = manager.evaluate(ROOM, SETTINGS, cutoff + 60, target, lambda _: target, 20.2)
+    assert result.targets_at(cutoff + 60, target).cool == 20.5
+    assert result.status == "warmth_hold"

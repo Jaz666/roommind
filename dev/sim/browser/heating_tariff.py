@@ -35,15 +35,15 @@ with sync_playwright() as pw:
           const times=el.shadowRoot.querySelectorAll('input[type=time]');
           if(times[0].value!=='00:00'||times[1].value!=='05:00')throw Error('Wrong GMT defaults');
           const nums=el.shadowRoot.querySelectorAll('input[type=number]');change(nums[0],'45');change(nums[1],'0');await el.updateComplete;
-          if(el.acMorningBoostOffset!==0||el.acMorningBoostMinutes!==45)throw Error('Numeric edits missing');
+          if(el.acMorningBoostStopMargin!==0||el.acMorningBoostMinutes!==45)throw Error('Numeric edits missing');
           const boxes=el.shadowRoot.querySelectorAll('input[type=checkbox]');if(boxes.length!==1)throw Error('Ineligible rooms selectable');
           boxes[0].checked=true;boxes[0].dispatchEvent(new Event('change'));await el.updateComplete;
           if(el.acMorningBoostRooms[0]!=='living')throw Error('Room not selected');
-          el.hass={...el.hass,config:{unit_system:{temperature:'°F'}}};el.acMorningBoostOffset=3;await el.updateComplete;
-          if(Math.abs(Number(el.shadowRoot.querySelectorAll('input[type=number]')[1].value)-5.4)>0.001)throw Error('Bias incorrectly converted as absolute temperature');
+          el.hass={...el.hass,config:{unit_system:{temperature:'°F'}}};el.acMorningBoostStopMargin=0.2;await el.updateComplete;
+          if(Math.abs(Number(el.shadowRoot.querySelectorAll('input[type=number]')[1].value)-0.36)>0.001)throw Error('Bias incorrectly converted as absolute temperature');
           if(!el.shadowRoot.textContent.includes('GMT / UTC'))throw Error('Timezone guidance missing');
           if(document.documentElement.scrollWidth>window.innerWidth)throw Error('Mobile overflow');
-          return 'GMT fields, heat-only tariff toggle, boost gating, zero bias, eligible rooms, Fahrenheit delta';
+          return 'GMT fields, heat-only tariff toggle, boost gating, zero stop margin, eligible rooms, Fahrenheit delta';
         }""")
         page.evaluate("""async () => {
           const hass={language:'en',states:{},config:{unit_system:{temperature:'°C'}},user:{name:'Test'}};

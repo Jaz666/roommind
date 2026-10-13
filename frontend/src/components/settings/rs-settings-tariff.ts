@@ -2,7 +2,7 @@ import { html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig } from "../../types";
 import { localize } from "../../utils/localize";
-import { tempUnit, tempStep } from "../../utils/temperature";
+import { tempUnit } from "../../utils/temperature";
 import { RsSettingsBase } from "./rs-settings-base";
 
 @customElement("rs-settings-tariff")
@@ -14,7 +14,7 @@ export class RsSettingsTariff extends RsSettingsBase {
   @property({ type: String }) public acOffPeakEnd = "05:00";
   @property({ type: Boolean }) public acMorningBoostEnabled = false;
   @property({ type: Number }) public acMorningBoostMinutes = 30;
-  @property({ type: Number }) public acMorningBoostOffset = 3;
+  @property({ type: Number }) public acMorningBoostStopMargin = 0.2;
   @property({ attribute: false }) public acMorningBoostRooms: string[] = [];
   private _t(key: string) {
     return localize(`tariff.${key}` as Parameters<typeof localize>[0], this.hass.language);
@@ -84,20 +84,20 @@ export class RsSettingsTariff extends RsSettingsBase {
               if (v >= 5 && v <= 120) this._fire("acMorningBoostMinutes", v);
             }} /></label
         ><label
-          >${this._t("bias")} (${tempUnit(this.hass)})<input
+          >${this._t("stop_margin")} (${tempUnit(this.hass)})<input
             type="number"
             min="0"
-            max=${this.hass.config.unit_system.temperature === "°F" ? 9 : 5}
-            step=${tempStep(this.hass)}
-            .value=${String(this.hass.config.unit_system.temperature === "°F" ? this.acMorningBoostOffset * 1.8 : this.acMorningBoostOffset)}
+            max=${this.hass.config.unit_system.temperature === "°F" ? 1.8 : 1}
+            step="0.1"
+            .value=${String(this.hass.config.unit_system.temperature === "°F" ? this.acMorningBoostStopMargin * 1.8 : this.acMorningBoostStopMargin)}
             @change=${(e: Event) => {
               const v = Number((e.target as HTMLInputElement).value);
               const offset = this.hass.config.unit_system.temperature === "°F" ? v / 1.8 : v;
-              if (offset >= 0 && offset <= 5) this._fire("acMorningBoostOffset", offset);
+              if (offset >= 0 && offset <= 1) this._fire("acMorningBoostStopMargin", offset);
             }}
         /></label>
       </div>
-      <p class="hint">${this._t("bias_hint")}</p>
+      <p class="hint">${this._t("stop_margin_hint")}</p>
       <p class="hint">${this._t("hold_hint")}</p>
       <b>${this._t("rooms")}</b>
       <div class="checks">

@@ -9,6 +9,11 @@ from datetime import UTC, datetime, timedelta
 from ..const import TargetTemps, is_override_active
 from ..utils.device_utils import get_ac_eids
 
+# Leave a small deadband for residual warmth before returning to automatic cooling.
+BOOST_COOLING_DEADBAND = 0.5
+BOOST_HANDOVER_SECONDS = 30 * 60
+BOOST_RESTART_DEADBAND = 0.3
+
 
 def cheap_period(settings: dict, ts: float) -> tuple[bool, float]:
     """Return whether electricity is cheap, and this/next cheap period's end.
@@ -42,6 +47,7 @@ class TariffDecision:
     cooling_floor: float | None = None
     hold_until: float | None = None
     status: str | None = None
+    heating_paused: bool = False
 
     def targets_at(self, ts: float, normal: TargetTemps) -> TargetTemps:
         """Apply the morning band while cheap; preserve warmth afterwards."""
@@ -55,7 +61,7 @@ class TariffDecision:
             and ts < self.boost_until
             and heat is not None
         ):
-            heat = max(heat, self.boost_target)
+            heat = self.boost_target
         if self.cooling_floor is not None and self.hold_until is not None and ts < self.hold_until and cool is not None:
             cool = max(cool, self.cooling_floor)
         return TargetTemps(heat=heat, cool=cool)
@@ -65,8 +71,8 @@ class HeatingTariffManager:
     """Choose a conservative boost and persist its post-cutoff cooling band.
 
     The first version uses a configurable lead time, not an uncalibrated thermal
-    forecast. It never adds degrees to the morning room target. A separate device
-    setpoint bias can make a Toshiba unit deliver heat despite its internal sensor.
+    forecast. Heating stops a little below the morning target to allow coasting;
+    a bounded cooling band prevents an immediate reversal at the tariff cutoff.
     """
 
     def __init__(self) -> None:
@@ -107,6 +113,10 @@ class HeatingTariffManager:
         else:
             assert normal.heat is not None
             hold = self.state.get(area_id)
+            if hold:
+                # Upgrade an in-progress beta 5 hold without losing its handover.
+                hold["hold_until"] = max(hold["hold_until"], hold["boost_until"] + BOOST_HANDOVER_SECONDS)
+                hold["cool"] = max(hold["cool"], hold["target"] + BOOST_COOLING_DEADBAND)
             if hold and (
                 ts >= hold["hold_until"]
                 or hold.get("tariff")
@@ -119,23 +129,34 @@ class HeatingTariffManager:
                 # cheap-rate cutoff. Constant schedules simply use today's target.
                 goal = normal.heat
                 cool = normal.cool
-                hold_until = end
+                hold_until = end + BOOST_HANDOVER_SECONDS
                 for future in range(int(end), int(end + 6 * 3600) + 1, 60):
                     upcoming = resolver(float(future))
                     if upcoming.heat is not None and upcoming.heat > goal:
-                        goal, cool, hold_until = upcoming.heat, upcoming.cool, float(future)
+                        goal, cool = upcoming.heat, upcoming.cool
+                        hold_until = max(float(future), end + BOOST_HANDOVER_SECONDS)
                         break
-                # Persist a hold only while preparing a future higher target.
-                # This prevents the old night cooling band undoing the preparation.
+                # Preserve hysteresis across repeated evaluations and reloads.
+                # A new target starts a new stopping decision.
+                paused = bool(hold and hold.get("target") == goal and hold.get("heating_paused", False))
                 hold = {
                     "target": goal,
-                    "cool": max(goal, cool or goal),
+                    "cool": max(goal + BOOST_COOLING_DEADBAND, cool or goal),
                     "boost_until": end,
+                    "heating_paused": paused,
                     "hold_until": hold_until,
                     "tariff": [settings.get("ac_off_peak_start", "00:00"), settings.get("ac_off_peak_end", "05:00")],
                 }
                 self.state[area_id] = hold
             if hold:
+                if cheap and ts < hold["boost_until"]:
+                    margin = settings.get("ac_morning_boost_stop_margin", 0.2)
+                    stop_at = hold["target"] - margin
+                    if current_temp >= stop_at:
+                        hold["heating_paused"] = True
+                    elif current_temp < stop_at - BOOST_RESTART_DEADBAND:
+                        hold["heating_paused"] = False
+                    decision.heating_paused = hold.get("heating_paused", False)
                 decision.boost_target = hold["target"] if cheap and ts < hold["boost_until"] else None
                 decision.boost_until = hold["boost_until"]
                 decision.cooling_floor = hold["cool"]

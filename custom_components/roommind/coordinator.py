@@ -787,6 +787,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
         targets = self._resolve_target_temps(room, settings, schedule_blocks, schedule_entity_id)
+        scheduled_targets = targets
 
         # Apply mold prevention temperature delta (heating target only).
         # Safety: mold prevention overrides "off" to prevent structural damage.
@@ -816,15 +817,29 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
 
         normal_resolver = target_resolver
+
+        def boost_resolver(ts: float) -> TargetTemps:
+            # Morning preparation must use the scheduled comfort target, not
+            # amplify it with the current mould-prevention temperature delta.
+            normal = normal_resolver(ts)
+            return TargetTemps(
+                heat=normal.heat - mold_prevention_temp_delta if normal.heat is not None else None,
+                cool=normal.cool,
+            )
+
         tariff = self._heating_tariff.evaluate(
             room,
             settings,
             time.time(),
-            targets,
-            normal_resolver,
+            scheduled_targets,
+            boost_resolver,
             current_temp,
             presence_away=presence_away,
         )
+        if tariff.boost_target is not None and current_temp_raw is None:
+            # Keep the cooling handover, but do not boost using a cached reading.
+            tariff.heating_paused = True
+            self._heating_tariff.state[area_id]["heating_paused"] = True
         targets = tariff.targets_at(time.time(), targets)
 
         def tariff_resolver(ts: float) -> TargetTemps:
@@ -885,13 +900,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_occupancy=q_occupancy,
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, targets)
-        if (
-            tariff.boost_target is not None
-            and current_temp is not None
-            and targets.heat is not None
-            and current_temp >= targets.heat
-            and mode == MODE_HEATING
-        ):
+        if tariff.heating_paused and mode == MODE_HEATING:
             mode, power_fraction = MODE_IDLE, 0.0
 
         # Compute effective single target_temp for display/history (mode + climate_mode aware)
@@ -1062,9 +1071,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         }
         # Group members without a usable external sensor remain unowned.
         tariff_stop -= shared_members - shared_owned
-        boost_reached = (
-            tariff.boost_target is not None and current_temp is not None and current_temp >= tariff.boost_target
-        )
+        boost_reached = tariff.heating_paused
         if boost_reached:
             tariff_stop.update(
                 eid
@@ -1313,12 +1320,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
                     heat_source_plan=heat_source_plan,
-                    ac_boost_offset=settings.get("ac_morning_boost_offset", 3.0)
-                    if tariff.boost_target is not None and mode == MODE_HEATING
-                    else None,
+                    ac_boost_offset=0.0 if tariff.boost_target is not None and mode == MODE_HEATING else None,
                     compressor_forced_on=compressor_forced_on or None,
                     compressor_forced_off=compressor_forced_off or None,
-                    force_off=force_off,
+                    force_off=force_off or tariff.heating_paused,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(

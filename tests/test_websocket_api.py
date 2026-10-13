@@ -3183,3 +3183,12 @@ async def test_tariff_settings_round_trip_and_zero_bias(ws_hass, store, connecti
     connection.send_error.assert_not_called()
     for key, value in settings.items():
         assert store.get_settings()[key] == value
+
+
+async def test_morning_stop_margin_settings_round_trip(ws_hass, store, connection):
+    await store.async_load()
+    await _save_settings(
+        ws_hass, connection, {"id": 1, "type": "roommind/settings/save", "ac_morning_boost_stop_margin": 0.4}
+    )
+    connection.send_error.assert_not_called()
+    assert store.get_settings()["ac_morning_boost_stop_margin"] == 0.4

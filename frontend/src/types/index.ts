@@ -198,7 +198,8 @@ export interface GlobalSettings {
   ac_off_peak_end?: string;
   ac_morning_boost_enabled?: boolean;
   ac_morning_boost_minutes?: number;
-  ac_morning_boost_offset?: number;
+  ac_morning_boost_offset?: number; // Legacy setting; no extra morning AC bias.
+  ac_morning_boost_stop_margin?: number;
   ac_morning_boost_rooms?: string[];
   outdoor_temp_sensor: string;
   outdoor_humidity_sensor: string;

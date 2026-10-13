@@ -161,7 +161,8 @@ _SETTINGS_SAVE_FIELDS = (
     "ac_off_peak_end",
     "ac_morning_boost_enabled",
     "ac_morning_boost_minutes",
-    "ac_morning_boost_offset",
+    "ac_morning_boost_offset",  # accepted for older clients; extra boost bias is no longer used
+    "ac_morning_boost_stop_margin",
     "ac_morning_boost_rooms",
     "valve_protection_enabled",
     "valve_protection_interval_days",
@@ -713,6 +714,7 @@ async def websocket_get_settings(
         vol.Optional("ac_off_peak_end"): vol.Match(r"^(?:[01]\d|2[0-3]):[0-5]\d$"),
         vol.Optional("ac_morning_boost_enabled"): bool,
         vol.Optional("ac_morning_boost_minutes"): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+        vol.Optional("ac_morning_boost_stop_margin"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
         vol.Optional("ac_morning_boost_offset"): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
         vol.Optional("ac_morning_boost_rooms"): [str],
         vol.Optional("schedule_off_action"): vol.In(["eco", "off"]),

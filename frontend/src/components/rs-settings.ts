@@ -79,7 +79,7 @@ export class RsSettings extends LitElement {
   @state() private _acOffPeakEnd = "05:00";
   @state() private _acMorningBoostEnabled = false;
   @state() private _acMorningBoostMinutes = 30;
-  @state() private _acMorningBoostOffset = 3;
+  @state() private _acMorningBoostStopMargin = 0.2;
   @state() private _acMorningBoostRooms: string[] = [];
   @state() private _loaded = false;
 
@@ -142,7 +142,7 @@ export class RsSettings extends LitElement {
       this._acOffPeakEnd = s.ac_off_peak_end ?? "05:00";
       this._acMorningBoostEnabled = s.ac_morning_boost_enabled ?? false;
       this._acMorningBoostMinutes = s.ac_morning_boost_minutes ?? 30;
-      this._acMorningBoostOffset = s.ac_morning_boost_offset ?? 3;
+      this._acMorningBoostStopMargin = s.ac_morning_boost_stop_margin ?? 0.2;
       this._acMorningBoostRooms = s.ac_morning_boost_rooms ?? [];
       this._compressorGroups = s.compressor_groups ?? [];
       this._coilDryEnabled = s.coil_dry_enabled ?? false;
@@ -226,7 +226,7 @@ export class RsSettings extends LitElement {
           .acOffPeakEnd=${this._acOffPeakEnd}
           .acMorningBoostEnabled=${this._acMorningBoostEnabled}
           .acMorningBoostMinutes=${this._acMorningBoostMinutes}
-          .acMorningBoostOffset=${this._acMorningBoostOffset}
+          .acMorningBoostStopMargin=${this._acMorningBoostStopMargin}
           .acMorningBoostRooms=${this._acMorningBoostRooms}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-tariff>
@@ -439,7 +439,7 @@ export class RsSettings extends LitElement {
         ac_off_peak_end: this._acOffPeakEnd,
         ac_morning_boost_enabled: this._acMorningBoostEnabled,
         ac_morning_boost_minutes: this._acMorningBoostMinutes,
-        ac_morning_boost_offset: this._acMorningBoostOffset,
+        ac_morning_boost_stop_margin: this._acMorningBoostStopMargin,
         ac_morning_boost_rooms: this._acMorningBoostRooms.filter(
           (id) =>
             this.rooms[id] &&
