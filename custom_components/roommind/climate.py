@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
@@ -19,13 +19,14 @@ from homeassistant.components.climate import (
     HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
+from homeassistant.const import ATTR_TEMPERATURE, PRECISION_TENTHS, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.temperature import display_temp
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -563,8 +564,17 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
             (kwargs.get(ATTR_TEMPERATURE), single_side),
         ]
         given = [(want, have) for want, have in pairs if want is not None]
-        tolerance = self._attr_target_temperature_step / 2
-        return bool(given) and all(have is not None and abs(want - have) < tolerance for want, have in given)
+        known = [(want, have) for want, have in given if have is not None]
+        if not given or len(known) < len(given):
+            return False
+        # Compared as shown: a °F display rounds to whole degrees, its echo is up to 0.28 K off
+        unit, precision = self.temperature_unit, self.precision
+        tolerance = max(self._attr_target_temperature_step, precision) / 2
+
+        def shown(value: float, digits: float) -> float:
+            return cast(float, display_temp(self.hass, value, unit, digits))
+
+        return all(abs(shown(want, PRECISION_TENTHS) - shown(have, precision)) < tolerance for want, have in known)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Hold the given target until the schedule changes next."""

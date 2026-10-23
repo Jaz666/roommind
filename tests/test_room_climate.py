@@ -14,7 +14,7 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
-from homeassistant.const import ATTR_TEMPERATURE
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.roommind.climate import RoomMindRoomClimate
@@ -67,6 +67,7 @@ def _live(**overrides):
 def setup():
     coordinator = MagicMock()
     coordinator.hass = MagicMock()
+    coordinator.hass.config.units.temperature_unit = UnitOfTemperature.CELSIUS
     coordinator.async_request_refresh = AsyncMock()
     coordinator.async_turn_room_off = AsyncMock()
     store = MagicMock()
@@ -83,7 +84,9 @@ def setup():
         store.get_room.return_value = room if room is not None else _room()
         if live is not None:
             coordinator.data = {"rooms": {"living_room": live}}
-        return RoomMindRoomClimate(coordinator, "living_room")
+        entity = RoomMindRoomClimate(coordinator, "living_room")
+        entity.hass = coordinator.hass
+        return entity
 
     with patch.object(RoomMindRoomClimate, "async_write_ha_state") as write:
         coordinator.write_state = write
@@ -616,3 +619,28 @@ async def test_added_to_hass_assigns_the_area(setup):
     ):
         await entity.async_added_to_hass()
     assign.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [21.0, 22.5, 17.5, 20.25])
+async def test_fahrenheit_display_echo_is_a_no_op(setup, target):
+    """A °F display shows whole degrees; echoing 72 °F for a 22.5 °C band is no new target."""
+    make, coordinator, store, _ = setup
+    coordinator.hass.config.units.temperature_unit = UnitOfTemperature.FAHRENHEIT
+    entity = make(_room(climate_mode="heat_only"), _live(heat_target=target))
+    shown = round(target * 9 / 5 + 32)
+
+    await entity.async_set_temperature(temperature=(shown - 32) * 5 / 9)
+
+    store.async_update_room.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fahrenheit_one_degree_step_is_a_new_target(setup):
+    make, coordinator, store, _ = setup
+    coordinator.hass.config.units.temperature_unit = UnitOfTemperature.FAHRENHEIT
+    entity = make(_room(climate_mode="heat_only"), _live(heat_target=22.5))
+
+    await entity.async_set_temperature(temperature=(73 - 32) * 5 / 9)
+
+    store.async_update_room.assert_called_once()
