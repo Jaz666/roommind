@@ -59,6 +59,17 @@ def test_infer_running_mode(states, expected):
     assert infer_running_mode(hass, room) == expected
 
 
+def test_a_sitting_out_ac_does_not_seed_a_heating_run():
+    """Heat only with a TRV: an AC an older release left heating must not start a TRV run (#476)."""
+    hass = MagicMock()
+    states = {TRV: _state("heat", "idle"), "climate.ac": _state("heat", "heating")}
+    hass.states.get = MagicMock(side_effect=states.get)
+    room = {**_room((TRV, "trv"), ("climate.ac", "ac")), "climate_mode": "heat_only"}
+
+    assert infer_running_mode(hass, room) == MODE_IDLE
+    assert infer_running_mode(hass, {**room, "climate_mode": "auto"}) == MODE_HEATING
+
+
 def test_a_device_roommind_switched_off_is_a_manual_run():
     """Across an integration reload the command cache survives: RoomMind's last word was off."""
     hass = MagicMock()

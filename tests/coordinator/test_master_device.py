@@ -2451,3 +2451,47 @@ class TestMasterOrchestrationAware:
         ]
         assert len(boiler_heat) == 0, "Boiler must stay idle when AC is selected"
         assert len(ac_master_heat) >= 1, "AC master must activate when AC is selected"
+
+
+@pytest.mark.asyncio
+async def test_wake_skips_the_ac_sitting_out_of_heat_only(hass, mock_config_entry):
+    """The zone woken for the master must be one that may run: not an AC sitting out heating (#476)."""
+    sitting_out = {
+        **_room_with_device("room_a", "climate.zone_a"),
+        "climate_mode": "heat_only",
+        "devices": [
+            {"entity_id": "climate.trv_a", "type": "trv", "role": "auto", "heating_system_type": ""},
+            {"entity_id": "climate.zone_a", "type": "ac", "role": "auto", "heating_system_type": ""},
+        ],
+    }
+    neighbour = _room_with_device("room_b", "climate.zone_b")
+    rooms = {"room_a": sitting_out, "room_b": neighbour}
+    zone = _make_ac_zone_state("off")
+    hass.states.get = MagicMock(return_value=zone)
+    hass.services.async_call = AsyncMock()
+    hass.data = {"roommind": {"store": _make_store_mock(rooms)}}
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    coordinator._compressor_manager.load_groups(
+        [
+            {
+                "id": "g1",
+                "name": "G1",
+                "members": ["climate.zone_a", "climate.zone_b"],
+                "master_entity": "climate.outdoor",
+            }
+        ]
+    )
+    group = coordinator._compressor_manager.get_groups()["g1"]
+    room_states = {
+        "room_a": {"mode": "heating", "commanded_mode": "heating"},
+        "room_b": {"mode": "heating", "commanded_mode": "heating"},
+    }
+
+    await coordinator._async_wake_member_zone(group, room_states, rooms)
+
+    woken = [
+        c.args[2]["entity_id"]
+        for c in hass.services.async_call.call_args_list
+        if c.args[1] == "set_hvac_mode" and c.args[2].get("hvac_mode") == "fan_only"
+    ]
+    assert woken == ["climate.zone_b"]

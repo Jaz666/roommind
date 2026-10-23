@@ -1230,7 +1230,11 @@ def infer_running_mode(hass: HomeAssistant, room_config: dict, before: float | N
     unavailable for a while after a restart): the caller asks again in the next cycle.
     """
     heating = cooling = False
+    # An AC sitting heating out may still run from an older release; that is no run of this room
+    sitting_out = set(get_ac_eids(room_config.get("devices", []))) if ac_heating_excluded(room_config) else set()
     for eid in get_all_entity_ids(room_config.get("devices", [])):
+        if eid in sitting_out:
+            continue
         state = hass.states.get(eid)
         if state is None:
             continue

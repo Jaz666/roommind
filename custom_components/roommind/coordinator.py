@@ -2464,9 +2464,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             commanded = rs.get("commanded_mode", rs.get("mode", MODE_IDLE))
             if commanded == MODE_IDLE:
                 continue
+            sits_out = commanded == MODE_HEATING and ac_heating_excluded(room)
             for dev in room.get("devices", []):
                 eid = dev.get("entity_id", "")
-                if eid not in member_set:
+                if eid not in member_set or (sits_out and dev.get("type") == "ac"):
                     continue
                 zone_state = self.hass.states.get(eid)
                 if zone_state and "fan_only" in (zone_state.attributes.get("hvac_modes") or []):
