@@ -314,9 +314,23 @@ class MPCOptimizer:
                 # deviation is smaller than the energy bias, or the room needs this
                 # direction only later (look-ahead). Its fraction is then 0.0 or belongs to
                 # the other direction, so it is not used. Heating runs at full power, which
-                # pre-heating slow systems relies on. Cooling runs at the minimum, because
-                # full power would drive an AC to its lowest setpoint.
-                pf = 1.0 if best_action == MODE_HEATING else MIN_POWER_FRACTION
+                # pre-heating slow systems relies on. Cooling aims at the strictest target
+                # ahead (pre-cooling), else runs at the minimum, because full power would
+                # drive an AC to its lowest setpoint.
+                if best_action == MODE_HEATING:
+                    pf = 1.0
+                else:
+                    pf, pf_mode = self.compute_optimal_power(
+                        current_temp,
+                        T_out,
+                        min(cool_target_series[i : i + self._lookahead_blocks]),
+                        dt_minutes,
+                        q_solar=qs,
+                        q_residual=qr,
+                        q_occupancy=qo,
+                        rebound_charge=charge,
+                    )
+                    pf = max(pf, MIN_POWER_FRACTION) if pf_mode == MODE_COOLING else MIN_POWER_FRACTION
 
             # Apply action with proportional Q for accurate forward prediction
             if best_action == MODE_HEATING:
