@@ -168,6 +168,15 @@ class TestBuildForecastOutdoorSeries:
         result = build_forecast_outdoor_series(forecast, 20.67, 6)
         assert result == [20.67, 15.6, 15.6, 15.6, 15.6, 15.6]
 
+    def test_without_reading_block_zero_keeps_the_forecast(self):
+        """No outdoor reading: the forecast is better than the placeholder, as in the controller (#464)."""
+        forecast = [{"temperature": 25.0}, {}]
+        result = build_forecast_outdoor_series(forecast, None, 24)
+        assert result == [25.0] * 12 + [10.0] * 12
+
+    def test_without_reading_or_forecast_uses_the_placeholder(self):
+        assert build_forecast_outdoor_series(None, None, 3) == [10.0] * 3
+
     def test_hourly_expansion_to_blocks(self):
         """Each hourly forecast entry covers 60 // PLAN_DT_MINUTES blocks."""
         forecast = [{"temperature": 5.0}, {"temperature": 6.0}]

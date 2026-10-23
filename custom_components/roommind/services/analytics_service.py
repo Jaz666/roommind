@@ -319,14 +319,9 @@ async def build_analytics_data(
                     current_t = p["room_temp"]
                     break
             if current_t is not None:
-                T_out_now = (
-                    coordinator.outdoor_temp_effective
-                    if coordinator.outdoor_temp_effective is not None
-                    else DEFAULT_OUTDOOR_TEMP_FALLBACK
-                )
                 outdoor_series = build_forecast_outdoor_series(
                     coordinator._weather_manager._outdoor_forecast,
-                    T_out_now,
+                    coordinator.outdoor_temp_effective,
                     len(target_forecast),
                 )
                 # Shading factor from current cover positions

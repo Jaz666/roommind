@@ -48,7 +48,7 @@ from .thermal_model import RCModel, ThermalEKF
 
 def build_forecast_outdoor_series(
     forecast: list[dict] | None,
-    current_outdoor: float,
+    current_outdoor: float | None,
     n_blocks: int,
 ) -> list[float]:
     """Build outdoor temperature series for analytics prediction.
@@ -56,22 +56,26 @@ def build_forecast_outdoor_series(
     Block 0 uses ``current_outdoor`` (real-time sensor reading). Subsequent
     blocks expand each hourly forecast entry to ``60 // PLAN_DT_MINUTES`` blocks.
     Padded with the last forecast value when the horizon exceeds the forecast.
+    Without a reading (None) block 0 keeps the forecast and only gaps get the
+    placeholder, as in ``MPCController._build_outdoor_series``.
     """
-    if not forecast:
-        return [current_outdoor] * n_blocks
+    from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, PLAN_DT_MINUTES
 
-    from .mpc_controller import PLAN_DT_MINUTES
+    fallback = current_outdoor if current_outdoor is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+    if not forecast:
+        return [fallback] * n_blocks
 
     blocks_per_hour = 60 // PLAN_DT_MINUTES
 
     series: list[float] = []
     for f in forecast:
-        temp = f.get("temperature", current_outdoor)
+        temp = f.get("temperature", fallback)
         series.extend([temp] * blocks_per_hour)
         if len(series) >= n_blocks:
             break
 
-    series[0] = current_outdoor
+    if current_outdoor is not None:
+        series[0] = current_outdoor
 
     while len(series) < n_blocks:
         series.append(series[-1])
