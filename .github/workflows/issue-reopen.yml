@@ -79,12 +79,13 @@ jobs:
             // A reopen by GITHUB_TOKEN fires no `reopened` run, so reset the labels here too.
             for (const name of ['waiting for feedback', 'stale', 'fix-released']) {
               if (labels.includes(name)) {
+                // stale-issues.yml removes `stale` on the same comment; a lost race answers 404.
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
                   name
-                });
+                }).catch(e => { if (e.status !== 404) throw e; });
               }
             }
             await github.rest.issues.addLabels({
@@ -117,11 +118,12 @@ jobs:
 
             for (const name of ['waiting for feedback', 'stale', 'fix-released']) {
               if (labels.includes(name)) {
+                // stale-issues.yml removes `stale` on the same comment; a lost race answers 404.
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
                   name
-                });
+                }).catch(e => { if (e.status !== 404) throw e; });
               }
             }
