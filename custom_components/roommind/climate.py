@@ -216,10 +216,11 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
-        base = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        base = ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TARGET_TEMPERATURE
         if self._climate_mode() == "auto":
+            # A single temperature stays accepted in auto and widens to a band (#471)
             return base | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-        return base | ClimateEntityFeature.TARGET_TEMPERATURE
+        return base
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
@@ -243,10 +244,12 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        if not self._is_override_active():
+        mode = self._climate_mode()
+        if mode == "auto" or not self._is_override_active():
+            # None keeps the dual slider in the HA thermostat card
             return None
         room = self._room() or {}
-        if self._climate_mode() == "cool_only":
+        if mode == "cool_only":
             val = room.get("override_cool")
         else:
             val = room.get("override_heat")

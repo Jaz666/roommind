@@ -134,9 +134,18 @@ def test_override_entity_auto_reports_range(mock_coordinator):
     entity = RoomMindOverrideClimate(coordinator, "living_room")
     assert HVACMode.HEAT_COOL in entity.hvac_modes
     assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-    assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
     assert entity.target_temperature_low == 21.0
     assert entity.target_temperature_high == 24.0
+
+
+def test_override_entity_auto_accepts_single_temperature(mock_coordinator):
+    """Auto mode also accepts a bare temperature, HA rejects it without the feature (#471)."""
+    coordinator, store = mock_coordinator
+    store.get_room.return_value = _active_auto_room()
+    entity = RoomMindOverrideClimate(coordinator, "living_room")
+    assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+    # None keeps the dual slider in the thermostat card
+    assert entity.target_temperature is None
 
 
 def test_override_entity_heat_only_single_target(mock_coordinator):
