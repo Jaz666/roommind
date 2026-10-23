@@ -880,8 +880,28 @@ MIN_IDLE_UPDATES = 60  # ~3 h of idle data at 3-min EKF intervals
 MIN_ACTIVE_UPDATES = 20  # ~1 h of heating or cooling data
 
 
+_SETBACK_RELEASE_ALL = frozenset(("heat", "cool"))
+
+
+def ac_heating_excluded(room_config: dict) -> bool:
+    """Heat only with thermostats in the room: the ACs sit heating out (#476).
+
+    A room with ACs only keeps heating with its heat pumps. Heat source
+    orchestration is the explicit choice to heat with the AC as well, so it
+    keeps routing to it (it runs with an external sensor only).
+    """
+    orchestrated = bool(room_config.get("heat_source_orchestration") and room_config.get("temperature_sensor"))
+    return (
+        room_config.get("climate_mode") == CLIMATE_MODE_HEAT_ONLY
+        and not orchestrated
+        and bool(get_trv_eids(room_config.get("devices", [])))
+    )
+
+
 def check_acs_can_heat(hass: HomeAssistant, room_config: dict) -> bool:
-    """Check if any AC entity in the room supports heating."""
+    """Check if any AC entity in the room supports heating and may heat."""
+    if ac_heating_excluded(room_config):
+        return False
     for eid in get_ac_eids(room_config.get("devices", [])):
         state = hass.states.get(eid)
         if state is None:
@@ -1992,6 +2012,7 @@ class MPCController:
         # ACs were previously never filtered because exclude_eids only ever
         # carried TRVs (valve protection is TRV-only).  Coil dry excludes ACs.
         acs = [e for e in self.acs if e not in _exclude]
+        sitting_out = set(acs) if ac_heating_excluded(self.room_config) else set()
 
         if not self.has_external_sensor:
             for eid in thermostats:
@@ -2280,6 +2301,12 @@ class MPCController:
             else:
                 ac_heat_target = effective_target
             for eid in acs:
+                if eid in sitting_out:
+                    if eid in _forced_on:
+                        await self._async_hold_retarget(eid, targets, current_temp)
+                    else:
+                        await self._async_sit_out(eid, targets)
+                    continue
                 if eid in _forced_off:
                     await async_idle_device(
                         self.hass,
@@ -2384,9 +2411,27 @@ class MPCController:
                     use_setpoint_offset=self.has_external_sensor,
                     head_offset=self._head_offset(eid, "idle"),
                     force_off=force_off,
-                    release_setback=self._setback_release,
+                    release_setback=_SETBACK_RELEASE_ALL if eid in sitting_out else self._setback_release,
                 )
                 await self._async_release_valve(eid)
+
+    async def _async_sit_out(self, eid: str, targets: TargetTemps) -> None:
+        """Idle an AC through a heating run it may not take part in (heat only, #476).
+
+        Its idle action applies, so a fan_only unit does not toggle with every run;
+        a setback would keep a unit left in heat heating, so it ends in off.
+        """
+        await async_idle_device(
+            self.hass,
+            eid,
+            self._devices,
+            area_id=self._area_id,
+            targets=targets,
+            use_setpoint_offset=self.has_external_sensor,
+            head_offset=self._head_offset(eid, "idle"),
+            force_off=self._force_off,
+            release_setback=_SETBACK_RELEASE_ALL,
+        )
 
     async def _async_drive_valve(self, eid: str, power_fraction: float, target: float) -> None:
         """Pin the valve of a TRV with direct valve control at ``power_fraction`` of its opening.

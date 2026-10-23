@@ -107,7 +107,7 @@
   "mode.auto": "Auto",
   "mode.auto_desc": "Chauffe et refroidit automatiquement en fonction de la température cible",
   "mode.heat_only": "Chauffer seulement",
-  "mode.heat_only_desc": "Utilise seulement les thermostats, la climatisation reste éteinte",
+  "mode.heat_only_desc": "Chauffe uniquement. Avec des thermostats dans la pièce, la climatisation reste éteinte, sauf si la sélection intelligente de la source est active",
   "mode.cool_only": "Refroidir seulement",
   "mode.cool_only_desc": "Utilise seulement la climatisation, les thermostats restent éteints",
   "mode.heating": "Chauffage",

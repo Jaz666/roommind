@@ -23,6 +23,10 @@ roommind:
       devices:
         - {entity_id: climate.wohnzimmer_ac, type: ac}
         - {entity_id: climate.wohnzimmer_trv, type: trv, heating_system_type: radiator, idle_action: low}
+      # Heat only keeps the AC of a room with a TRV off (#476); auto lets it heat along
+      climate_mode: auto
+      comfort_heat: 21.0
+      eco_heat: 18.0
 expect:
   - {invariant: hold_shows_running_unit, label: room shows the held AC and the min-run time left (#452)}
   - {metric: model.learned_beta_s, room: wohnzimmer, max: 4.0, label: "held AC runs not trained as idle (5.8 to 6.9 before, truth 2.4)"}

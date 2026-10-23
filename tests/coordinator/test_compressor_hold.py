@@ -648,6 +648,7 @@ class TestHoldShowsTheRunningUnit:
                 {"entity_id": trv, "type": "trv", "role": "auto", "heating_system_type": ""},
                 {"entity_id": AC, "type": "ac", "role": "auto", "heating_system_type": ""},
             ],
+            "climate_mode": "auto",
         }
         coordinator = await _setup(hass, mock_config_entry, room=room_cfg, groups=({**GROUP, "members": [AC]},))
         ac = {"state": _ac_state("off", 16.0)}
@@ -681,6 +682,7 @@ class TestHoldShowsTheRunningUnit:
                 {"entity_id": trv, "type": "trv", "role": "auto", "heating_system_type": ""},
                 {"entity_id": AC, "type": "ac", "role": "auto", "heating_system_type": ""},
             ],
+            "climate_mode": "auto",
         }
         coordinator = await _setup(hass, mock_config_entry, room=room_cfg)
         ac = {"state": _ac_state("off", 16.0)}

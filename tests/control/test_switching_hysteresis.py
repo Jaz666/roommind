@@ -258,7 +258,7 @@ def _ac_state(modes):
 def test_trv_room_with_a_heating_ac_uses_the_bang_bang_hysteresis(monkeypatch, ac_modes, expected):
     """TRV + heat pump: the AC heats along (orchestrated or not), so its air-node hysteresis applies."""
     _fake_plan(monkeypatch, MODE_HEATING)
-    ctrl = _controller({"climate_mode": "heat_only", "acs": ["climate.ac1"]})
+    ctrl = _controller({"climate_mode": "auto", "acs": ["climate.ac1"]})
     ctrl.hass.states.get = MagicMock(return_value=_ac_state(ac_modes))
     mode, _ = ctrl._evaluate_mpc(20.8, TargetTemps(heat=21.0, cool=24.0))
     assert mode == expected
@@ -494,7 +494,7 @@ def test_optimizer_knows_when_a_heating_ac_shares_the_model(monkeypatch, ac_mode
 
     monkeypatch.setattr(MPCOptimizer, "__init__", spy)
     _fake_plan(monkeypatch, MODE_IDLE)
-    room = {"climate_mode": "heat_only", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
+    room = {"climate_mode": "auto", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
     ctrl = _controller(room, heating_system_type="underfloor")
     ctrl.hass.states.get = MagicMock(return_value=_ac_state(ac_modes))
     ctrl._evaluate_mpc(20.0, TargetTemps(heat=21.0, cool=None))

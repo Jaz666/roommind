@@ -127,3 +127,13 @@ def test_valve_label_is_the_opening_the_valve_is_held_at(coordinator):
     }
     direct_valve._valve_sent["climate.trv"] = direct_valve._Held(0.0, 45, 21.0, "number.trv_open", "number.trv_close")
     assert _label(coordinator, room, MODE_HEATING, 0.3, _states(trv=("heat", "heating"))) == 0.45
+
+
+def test_heat_only_ac_sitting_out_is_no_driven_device(coordinator):
+    """#476: the AC idles in fan_only while the TRV heats; it must not dilute the label."""
+    room = {**_room("climate.trv", "climate.ac"), "climate_mode": "heat_only"}
+    states = _states(trv=("heat", "heating"), ac=("fan_only", "fan"))
+    assert _label(coordinator, room, MODE_HEATING, 0.3, states) == 1.0
+    # A unit still running out its min run delivers all the same.
+    states = _states(trv=("heat", "heating"), ac=("heat", "heating"))
+    assert _label(coordinator, room, MODE_HEATING, 0.3, states) == 1.0

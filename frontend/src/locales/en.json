@@ -107,7 +107,7 @@
   "mode.auto": "Auto",
   "mode.auto_desc": "Heats & cools automatically based on target temperature",
   "mode.heat_only": "Heat Only",
-  "mode.heat_only_desc": "Only uses thermostats, ACs stay off",
+  "mode.heat_only_desc": "Heats only. With thermostats in the room, ACs stay off unless smart source selection is on",
   "mode.cool_only": "Cool Only",
   "mode.cool_only_desc": "Only uses ACs, thermostats stay off",
   "mode.heating": "Heating",

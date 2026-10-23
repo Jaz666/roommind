@@ -107,7 +107,7 @@
   "mode.auto": "Automatisch",
   "mode.auto_desc": "Heizt und kühlt automatisch basierend auf der Zieltemperatur",
   "mode.heat_only": "Nur Heizen",
-  "mode.heat_only_desc": "Nutzt nur Thermostate, Klimaanlagen bleiben aus",
+  "mode.heat_only_desc": "Nur Heizen. Mit Thermostaten im Raum bleiben Klimaanlagen aus, außer die intelligente Quellenauswahl ist an",
   "mode.cool_only": "Nur Kühlen",
   "mode.cool_only_desc": "Nutzt nur Klimaanlagen, Thermostate bleiben aus",
   "mode.heating": "Heizen",

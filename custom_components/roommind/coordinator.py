@@ -55,6 +55,7 @@ from .control.direct_valve import async_release_orphaned_valves, async_release_v
 from .control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
     MPCController,
+    ac_heating_excluded,
     async_idle_device,
     check_acs_can_heat,
     get_can_heat_cool,
@@ -981,12 +982,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if heat_source_plan is not None and mode == MODE_HEATING:
             plan_parked_eids = set(all_device_eids) - {cmd.entity_id for cmd in heat_source_plan.commands if cmd.active}
             plan_unlisted_eids = set(all_device_eids) - {cmd.entity_id for cmd in heat_source_plan.commands}
+        # Heat only with thermostats: the ACs sit the heating run out like parked devices (#476).
+        sitting_out: set[str] = set()
+        if mode == MODE_HEATING and ac_heating_excluded(room):
+            sitting_out = set(get_ac_eids(room.get("devices", [])))
+            plan_parked_eids |= sitting_out
 
         if all_device_eids and climate_active and not window_open and not force_off:
             for eid in all_device_eids:
                 if self._compressor_manager.get_group_for_entity(eid) is None:
                     continue
-                if mode != MODE_IDLE:
+                if eid in sitting_out:
+                    if self._compressor_manager.check_must_stay_active(eid):
+                        compressor_forced_on.add(eid)
+                elif mode != MODE_IDLE:
                     if not self._compressor_manager.check_can_activate(eid):
                         compressor_forced_off.add(eid)
                     else:
@@ -1022,7 +1031,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # transition when all cooling-capable devices are blocked.  In heating
             # mode both TRVs and ACs can contribute, so the full device set applies.
             _mode_relevant_eids = (
-                set(get_ac_eids(room.get("devices", []))) if mode == MODE_COOLING else set(all_device_eids)
+                set(get_ac_eids(room.get("devices", [])))
+                if mode == MODE_COOLING
+                else set(all_device_eids) - sitting_out
             )
             if compressor_forced_off and _mode_relevant_eids and compressor_forced_off >= _mode_relevant_eids:
                 mode = MODE_IDLE
@@ -1515,6 +1526,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         _mode_relevant_eids: set[str] = (
             set(get_ac_eids(_room_devices)) if mode == MODE_COOLING else set(get_all_entity_ids(_room_devices))
         )
+        if mode == MODE_HEATING and ac_heating_excluded(room):
+            _mode_relevant_eids -= set(get_ac_eids(_room_devices))
         _all_direct = bool(_mode_relevant_eids) and _mode_relevant_eids <= _direct_eids
         _direct_offsets = get_setpoint_offsets(_room_devices) if has_external_sensor else {}
         # One shown value only when every driven device agrees on the offset
@@ -1784,8 +1797,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         """Share of the driven devices that report running in ``mode`` (EKF training label).
 
         Driven devices: the plan's active commands with orchestration, else every device
-        that is not off. A parked device still running (compressor hold) delivers, so it
-        counts as well. A heat pump that is defrosting delivers no heat (0.0).
+        that is not off (without the ACs of a heat only room with thermostats). A parked
+        device still running (compressor hold) delivers, so it counts as well. A heat pump that is defrosting delivers no heat (0.0).
         TRVs with direct valve control count with the opening they are held at, devices
         without a usable ``hvac_action`` with their commanded pf; no observable device at
         all keeps ``commanded_pf``.
@@ -1797,6 +1810,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         else:
             driven = dict.fromkeys(get_all_entity_ids(room.get("devices", [])), commanded_pf)
             parked = []
+            if mode == MODE_HEATING and ac_heating_excluded(room):
+                # The ACs sit heat only out (#476); a fan_only unit would read as delivering nothing
+                parked = get_ac_eids(room.get("devices", []))
+                for eid in parked:
+                    driven.pop(eid, None)
         valve_eids = get_valve_entities(room.get("devices", []))
         labels: list[float] = []
         for eid, pf in driven.items():
@@ -2318,7 +2336,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         When heat-source orchestration is active for a room, the room is
         only counted if the orchestration decision includes this group's
         device types.  Prevents a boiler master from activating when only
-        the AC (secondary) is heating, and vice versa. (#168)
+        the AC (secondary) is heating, and vice versa. (#168) A heat only
+        room with thermostats heats through its TRVs alone (#476).
         """
         if not settings.get("climate_control_active", True):
             return []
@@ -2339,7 +2358,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
             # Orchestration filter (heating only): skip this room when its
             # active heat sources don't include this group's device types.
-            if (
+            if commanded == MODE_HEATING and ac_heating_excluded(room):
+                if not room_contributes_to_group(room.get("devices", []), member_set, "primary"):
+                    continue
+            elif (
                 commanded == MODE_HEATING
                 and room.get("heat_source_orchestration", False)
                 and not room_contributes_to_group(

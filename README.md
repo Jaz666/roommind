@@ -128,7 +128,7 @@ These can be used in HA automations, dashboards, or other integrations.
 | Presets Comfort / Eco | Comfort or eco override, also until the next schedule change |
 | Preset Manual | Shown while a custom temperature is held (set here, in the panel or on the old override entity); picking it holds the targets in force until the next schedule change |
 | Preset Schedule (`none`) | Ends the override and returns to the schedule |
-| HVAC mode `heat` / `cool` / `heat_cool` | Climate mode Heat only / Cool only / Auto, and turns control on. `climate.turn_on` turns control on and keeps the climate mode. |
+| HVAC mode `heat` / `cool` / `heat_cool` | Climate mode Heat only / Cool only / Auto, and turns control on. `climate.turn_on` turns control on and keeps the climate mode. In Heat only, an AC in a room with thermostats stays off unless Smart source selection is on. |
 | HVAC mode `off` | Switches the room's devices off and stops controlling them |
 | `hvac_action` | What RoomMind is doing: `heating`, `cooling`, `idle` or `off` |
 | Current temperature and humidity | The room's readings |

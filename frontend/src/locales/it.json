@@ -107,7 +107,7 @@
   "mode.auto": "Auto",
   "mode.auto_desc": "Riscalda e raffresca automaticamente in base alla temperatura obiettivo",
   "mode.heat_only": "Solo riscaldamento",
-  "mode.heat_only_desc": "Usa solo i termostati, gli AC restano spenti",
+  "mode.heat_only_desc": "Solo riscaldamento. Con termostati nella stanza, gli AC restano spenti, salvo con la scelta intelligente della fonte attiva",
   "mode.cool_only": "Solo raffrescamento",
   "mode.cool_only_desc": "Usa solo gli AC, i termostati restano spenti",
   "mode.heating": "Riscaldamento",
