@@ -241,6 +241,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._override_seeded_at: dict[str, float] = {}
         # Rooms whose devices the next cycle switches off (room climate entity set to off)
         self._rooms_to_switch_off: set[str] = set()
+        # Rooms off through their climate entity: their valves go back without the room target (#413)
+        self._rooms_switched_off: set[str] = set()
         self._switch_entity_areas: set[str] = set()
         self._climate_control_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
@@ -1072,6 +1074,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
 
         switch_off = area_id in self._rooms_to_switch_off and self._take_room_switch_off(area_id, climate_active)
+        if switch_off:
+            self._rooms_switched_off.add(area_id)
+        elif climate_active:
+            self._rooms_switched_off.discard(area_id)
         if not climate_active:
             # Climate control disabled — do NOT send commands. A pinned valve is handed back
             # all the same, or the TRV could not regulate on its own.
@@ -1079,7 +1085,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             power_fraction = 0.0
             if switch_off:
                 await self._async_switch_devices_off(area_id, room.get("devices", []), targets)
-            await self._async_release_valves(area_id, room.get("devices", []))
+            # The room target would make a TRV switched off or to min_temp heat on by itself
+            await self._async_release_valves(
+                area_id, room.get("devices", []), hand_back=area_id not in self._rooms_switched_off
+            )
         elif waiting_for_data:
             mode = MODE_IDLE
             power_fraction = 0.0
@@ -1453,7 +1462,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         held_mode = self._infer_device_mode(room, compressor_held)
                         held_pf = 1.0 if held_mode != MODE_IDLE else 0.0
                     if held_mode != MODE_IDLE:
-                        if any(is_hold_throttled(eid) for eid in compressor_held):
+                        # A held valve sits at the minimum opening, not at the last run's power
+                        if any(is_hold_throttled(eid) or held_opening(eid) is not None for eid in compressor_held):
                             held_pf = MIN_POWER_FRACTION
                         else:
                             held_pf = self._last_run_pf.get(area_id, held_pf)
@@ -2184,11 +2194,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Control stays off, so no later cycle reports this member to its compressor group
             self._compressor_manager.update_member(entity_id, False)
 
-    async def _async_release_valves(self, area_id: str, devices: list[dict]) -> None:
+    async def _async_release_valves(self, area_id: str, devices: list[dict], *, hand_back: bool = True) -> None:
         """Hand every valve RoomMind pins in this room back to its TRV (#413)."""
         for entity_id, (opening, closing) in get_valve_entities(devices).items():
             try:
-                await async_release_valve(self.hass, entity_id, opening, closing, area_id=area_id, hand_back=True)
+                await async_release_valve(self.hass, entity_id, opening, closing, area_id=area_id, hand_back=hand_back)
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Room '%s': releasing the valve of '%s' failed", area_id, entity_id, exc_info=True)
 
@@ -2218,6 +2228,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._previous_modes.pop(area_id, None)
         self._override_seeded_at.pop(area_id, None)
         self._rooms_to_switch_off.discard(area_id)
+        self._rooms_switched_off.discard(area_id)
         self._last_valid_temps.pop(area_id, None)
         self._had_valid_temp.discard(area_id)
         self._startup_guard_warned.discard(area_id)
