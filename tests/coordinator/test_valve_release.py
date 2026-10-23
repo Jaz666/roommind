@@ -267,3 +267,59 @@ async def test_held_valve_trv_shows_the_opening_it_is_held_at(hass, mock_config_
     assert room["compressor_protection_reason"] == "min_run"
     assert direct_valve.held_opening("climate.living_room") == MIN_POWER_FRACTION
     assert room["heating_power"] == round(MIN_POWER_FRACTION * 100)
+
+
+@pytest.mark.asyncio
+async def test_mixed_hold_shows_the_ac_boost_not_the_valve_minimum(hass, mock_config_entry):
+    """A held AC keeps its boost next to a held valve: the room shows the last run, not 15 % (#452/#413)."""
+    from custom_components.roommind.const import MIN_POWER_FRACTION, MODE_HEATING
+    from custom_components.roommind.control import direct_valve
+    from custom_components.roommind.control.mpc_controller import MPCController
+
+    AREA = "living_room_abc12345"
+    AC = "climate.living_room_ac"
+    room = {
+        **VALVE_ROOM,
+        "acs": [AC],
+        "devices": [*VALVE_ROOM["devices"], {"entity_id": AC, "type": "ac", "role": "auto", "heating_system_type": ""}],
+    }
+    groups = [
+        {"id": "boiler", "name": "Boiler", "members": ["climate.living_room"], "min_run_minutes": 15},
+        {"id": "outdoor", "name": "Outdoor", "members": [AC], "min_run_minutes": 15},
+    ]
+    store = _make_store_mock({AREA: room}, settings={"compressor_groups": groups})
+    hass.data = {"roommind": {"store": store}}
+    hass.services.async_call = AsyncMock()
+    coordinator = _create_coordinator(hass, mock_config_entry)
+
+    def wire(state, temp, action=None, **attrs):
+        trv = MagicMock()
+        trv.state = state
+        trv.attributes = {"hvac_modes": ["off", "heat"], "min_temp": 5.0, "max_temp": 30.0, "target_temp_step": 0.5}
+        trv.attributes.update(attrs)
+        ac = MagicMock()
+        ac.state = state
+        ac.attributes = {
+            "hvac_modes": ["off", "heat", "cool"],
+            "min_temp": 16.0,
+            "max_temp": 30.0,
+            "target_temp_step": 0.5,
+            **attrs,
+        }
+        if action:
+            trv.attributes["hvac_action"] = action
+            ac.attributes["hvac_action"] = action
+        base = make_mock_states_get(temp=temp, extra={OPEN: ("80", NUMBER_ATTRS), CLOSE: ("20", NUMBER_ATTRS)})
+        devs = {"climate.living_room": trv, AC: ac}
+        hass.states.get = MagicMock(side_effect=lambda eid: devs.get(eid) or base(eid))
+
+    wire("off", "18.0", temperature=5.0)
+    with patch.object(MPCController, "async_evaluate", AsyncMock(return_value=(MODE_HEATING, 0.8))):
+        await coordinator._async_update_data()
+
+    wire("heat", "21.3", action="heating", temperature=25.0)
+    coordinator._mode_on_since[AREA] -= 3600
+    rs = (await coordinator._async_update_data())["rooms"][AREA]
+    assert direct_valve.held_opening("climate.living_room") == MIN_POWER_FRACTION
+    assert rs["compressor_protection_reason"] == "min_run"
+    assert rs["heating_power"] == 80

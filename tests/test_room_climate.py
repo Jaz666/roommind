@@ -644,3 +644,14 @@ async def test_fahrenheit_one_degree_step_is_a_new_target(setup):
     await entity.async_set_temperature(temperature=(73 - 32) * 5 / 9)
 
     store.async_update_room.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("want", "kept"), [(21.2, True), (21.25, False), (20.75, False), (21.24, True)])
+async def test_celsius_echo_tolerance_is_half_a_step(setup, want, kept):
+    make, _, store, _ = setup
+    entity = make(_room(climate_mode="heat_only"), _live(heat_target=21.0))
+
+    await entity.async_set_temperature(temperature=want)
+
+    assert store.async_update_room.called is not kept

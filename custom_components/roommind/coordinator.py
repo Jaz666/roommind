@@ -1463,7 +1463,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         held_pf = 1.0 if held_mode != MODE_IDLE else 0.0
                     if held_mode != MODE_IDLE:
                         # A held valve sits at the minimum opening, not at the last run's power
-                        if any(is_hold_throttled(eid) or held_opening(eid) is not None for eid in compressor_held):
+                        if any(is_hold_throttled(eid) for eid in compressor_held) or all(
+                            held_opening(eid) is not None for eid in compressor_held
+                        ):
                             held_pf = MIN_POWER_FRACTION
                         else:
                             held_pf = self._last_run_pf.get(area_id, held_pf)
@@ -2452,6 +2454,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         member_set = set(group.members)
         wake_eid: str | None = None
+        # ACs of heat only rooms with thermostats never run there (#476)
+        sitting_out = {
+            eid
+            for room in rooms_config.values()
+            if ac_heating_excluded(room)
+            for eid in get_ac_eids(room.get("devices", []))
+        }
 
         for area_id, room in rooms_config.items():
             if not room.get("climate_control_enabled", True):
@@ -2464,10 +2473,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             commanded = rs.get("commanded_mode", rs.get("mode", MODE_IDLE))
             if commanded == MODE_IDLE:
                 continue
-            sits_out = commanded == MODE_HEATING and ac_heating_excluded(room)
             for dev in room.get("devices", []):
                 eid = dev.get("entity_id", "")
-                if eid not in member_set or (sits_out and dev.get("type") == "ac"):
+                if eid not in member_set or eid in sitting_out:
                     continue
                 zone_state = self.hass.states.get(eid)
                 if zone_state and "fan_only" in (zone_state.attributes.get("hvac_modes") or []):
@@ -2478,6 +2486,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         if not wake_eid:
             for eid in group.members:
+                if eid in sitting_out:
+                    continue
                 zone_state = self.hass.states.get(eid)
                 if zone_state and "fan_only" in (zone_state.attributes.get("hvac_modes") or []):
                     wake_eid = eid

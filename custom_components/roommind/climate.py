@@ -567,8 +567,10 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         known = [(want, have) for want, have in given if have is not None]
         if not given or len(known) < len(given):
             return False
-        # Compared as shown: a °F display rounds to whole degrees, its echo is up to 0.28 K off
         unit, precision = self.temperature_unit, self.precision
+        if unit == self.hass.config.units.temperature_unit:
+            return all(abs(want - have) < self._attr_target_temperature_step / 2 for want, have in known)
+        # Compared as shown: a °F display rounds to whole degrees, its echo is up to 0.28 K off
         tolerance = max(self._attr_target_temperature_step, precision) / 2
 
         def shown(value: float, digits: float) -> float:
