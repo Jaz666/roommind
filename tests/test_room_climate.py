@@ -260,6 +260,7 @@ def test_extra_attributes(setup):
         "override_until": NEXT_EVENT.isoformat(),
         "window_open": True,
         "presence_away": True,
+        "occupancy_vacant": False,
         "vacation": True,
     }
     assert entity.current_humidity == 55.0

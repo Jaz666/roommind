@@ -43,6 +43,7 @@ export interface RoomLiveData {
   confidence: number | null;
   mpc_active: boolean;
   presence_away: boolean;
+  occupancy_vacant?: boolean;
   mold_risk_level: "ok" | "warning" | "critical";
   mold_surface_rh: number | null;
   mold_surface_temp: number | null;
@@ -116,6 +117,8 @@ export interface RoomConfig {
   temperature_sensor: string;
   humidity_sensor: string;
   occupancy_sensors?: string[];
+  occupancy_eco_enabled?: boolean;
+  occupancy_eco_delay?: number;
   window_sensors: string[];
   window_open_delay: number;
   window_close_delay: number;

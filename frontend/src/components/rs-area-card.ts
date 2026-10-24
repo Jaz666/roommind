@@ -604,7 +604,9 @@ export class RsAreaCard extends LitElement {
         ${
           live.presence_away
             ? html`<ha-icon class="away-icon" icon="mdi:home-off-outline"></ha-icon>`
-            : nothing
+            : live.occupancy_vacant && !live.override_active
+              ? html`<ha-icon class="away-icon" icon="mdi:account-off-outline"></ha-icon>`
+              : nothing
         }
       </span>
     `;

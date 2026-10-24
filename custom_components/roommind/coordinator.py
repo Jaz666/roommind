@@ -94,7 +94,8 @@ from .utils.device_utils import (
     room_contributes_to_group,
 )
 from .utils.history_store import HistoryStore
-from .utils.schedule_utils import resolve_schedule_index
+from .utils.presence_utils import is_room_vacant
+from .utils.schedule_utils import cap_to_eco, resolve_schedule_index
 from .utils.sensor_utils import read_sensor_value
 from .utils.temp_utils import celsius_delta_to_ha, ha_temp_to_celsius, ha_temp_unit_str
 
@@ -683,6 +684,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "confidence": None,
                 "mpc_active": False,
                 "presence_away": False,
+                "occupancy_vacant": False,
                 "force_off": False,
                 "mold_risk_level": "ok",
                 "mold_surface_rh": None,
@@ -743,7 +745,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
-        targets = self._resolve_target_temps(room, settings, schedule_blocks, schedule_entity_id)
+        occupancy_vacant = is_room_vacant(self.hass, room, time.time())
+        targets = self._resolve_target_temps(
+            room, settings, schedule_blocks, schedule_entity_id, room_vacant=occupancy_vacant
+        )
 
         # Apply mold prevention temperature delta (heating target only).
         # Safety: mold prevention overrides "off" to prevent structural damage.
@@ -771,6 +776,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             hass=self.hass,
             presence_away=presence_away,
             mold_prevention_delta=mold_prevention_temp_delta,
+            room_vacant=occupancy_vacant,
         )
 
         # After a reload or restart the previous mode is unknown; seed it from what the
@@ -1251,6 +1257,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             has_external_sensor=has_external_sensor,
             window_open=window_open,
             presence_away=presence_away,
+            occupancy_vacant=occupancy_vacant,
             force_off=force_off,
             mode=mode,
             power_fraction=power_fraction,
@@ -1519,6 +1526,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         has_external_sensor: bool,
         window_open: bool,
         presence_away: bool,
+        occupancy_vacant: bool,
         force_off: bool,
         mode: str,
         power_fraction: float,
@@ -1622,6 +1630,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "confidence": self._model_manager.get_confidence(area_id),
             "mpc_active": mpc_active,
             "presence_away": presence_away,
+            "occupancy_vacant": occupancy_vacant,
             "force_off": force_off,
             "mold_risk_level": mold_risk_level,
             "mold_surface_rh": (round(mold_surface_rh, 1) if mold_surface_rh is not None else None),
@@ -1979,19 +1988,19 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         settings: dict,
         schedule_blocks: dict | None = None,
         schedule_entity_id: str | None = None,
+        room_vacant: bool = False,
     ) -> TargetTemps:
         """Resolve dual heat/cool target temperatures.
 
         Priority: override > vacation > presence away > schedule block temp > comfort/eco.
         Returns TargetTemps(heat, cool). None values mean "force off".
+        ``room_vacant`` caps the schedule result at eco (occupancy eco, #180).
 
         When ``presence_clears_override`` is enabled in settings and the room is
         currently presence-away (and not ``ignore_presence``), the override is
         held in the store but skipped here so the room follows the presence-away
         branch instead.
         """
-        from .utils.schedule_utils import find_active_block, sanitize_block_temp
-
         # 1. Override — split heat/cool dead-band (suppressed when presence-away clears it)
         override_heat = room.get("override_heat")
         override_cool = room.get("override_cool")
@@ -2045,6 +2054,25 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
 
         # 3. Schedule / comfort / eco
+        targets = self._resolve_schedule_targets(room, settings, schedule_blocks, schedule_entity_id)
+        if room_vacant:
+            return cap_to_eco(
+                targets,
+                room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
+                room.get("eco_cool", DEFAULT_ECO_COOL),
+            )
+        return targets
+
+    def _resolve_schedule_targets(
+        self,
+        room: dict,
+        settings: dict,
+        schedule_blocks: dict | None,
+        schedule_entity_id: str | None,
+    ) -> TargetTemps:
+        """Targets from the active schedule block, comfort without schedule, eco/off outside blocks."""
+        from .utils.schedule_utils import find_active_block, sanitize_block_temp
+
         comfort_heat = room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT))
         comfort_cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
         eco_heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))

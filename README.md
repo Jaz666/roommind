@@ -22,6 +22,7 @@
 - **Manual Override** - Boost, eco, or custom temperature with configurable duration and instant UI feedback.
 - **Presence Detection** - Link `person.*`, `device_tracker.*`, `binary_sensor.*`, or `input_boolean.*` entities globally or per room. Eco temperature is used when all assigned persons are away.
 - **Ignore Presence per Room** - Rooms can opt out of presence detection to always follow their schedule.
+- **Eco When the Room Is Empty** - Per room, optional. Occupancy sensors (motion, presence) always help the thermal model learn how much heat people and devices add. With "Eco when the room is empty" turned on, they also control the room: once every occupancy sensor has reported the room empty for the delay (default 15 minutes), the room drops to its eco temperature, and it returns to its schedule as soon as someone is detected again. An empty room never gets a higher target than its schedule, and "off" stays off. An empty room is kept at eco and only heats to comfort once someone is in it, so a slow heating system may need an eco temperature close to comfort. An unavailable or missing sensor counts as occupied, and after a Home Assistant restart the delay starts over.
 - **Vacation Mode** - Global setback temperature with end date for all rooms.
 - **Window/Door Pause** - Pauses climate control when windows or doors are open, with configurable open/close delays.
   After a restart, RoomMind waits until the window sensors report a state (at most 5 minutes; a sensor that is still unavailable then counts as closed). A sensor that no longer exists at all (deleted or renamed) counts as closed right away once Home Assistant has finished starting, with a warning in the log. A sensor that drops out briefly keeps its last state.
@@ -84,6 +85,8 @@ Select a room and time range (24h / 7d / 30d / 90d / custom) to view temperature
 Manual Override > Vacation > Presence Away > Schedule Block > Comfort / Eco  (+Mold Delta)
 ```
 
+"Eco when the room is empty" lowers the schedule result to eco while the room is empty; override, vacation and presence away still take priority.
+
 ### Full Control vs. Managed Mode
 
 An external temperature sensor is really where RoomMind starts to shine. It is the single most impactful addition for any room, unlocking the full potential of the thermal model, MPC optimization, and proportional device control.
@@ -133,7 +136,7 @@ These can be used in HA automations, dashboards, or other integrations.
 | `hvac_action` | What RoomMind is doing: `heating`, `cooling`, `idle` or `off` |
 | Current temperature and humidity | The room's readings |
 
-Attributes: `override_until`, `window_open`, `presence_away`, `vacation`. An open window shows as `idle` with `window_open: true`.
+Attributes: `override_until`, `window_open`, `presence_away`, `occupancy_vacant`, `vacation`. An open window shows as `idle` with `window_open: true`.
 
 The entity is placed in the room's area once when it is created, so it shows up on area cards and Assist finds it by the area ("set the temperature in the living room to 22"). An area you change or remove later is kept. For voice control, hide the room's own thermostats and ACs from Assist (Settings → Voice assistants → Expose), otherwise Assist finds several climate entities in the room and cannot pick one.
 

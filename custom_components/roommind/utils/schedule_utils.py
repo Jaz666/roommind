@@ -223,10 +223,12 @@ def resolve_targets_at_time(
     presence_away_action: str = "eco",
     schedule_off_action: str = "eco",
     presence_clears_override: bool = False,
+    room_vacant: bool = False,
 ) -> TargetTemps:
     """Resolve dual heat/cool target temps at a specific timestamp.
 
     Returns TargetTemps(heat, cool). None values mean "force off".
+    ``room_vacant`` caps the schedule result at eco (occupancy eco, #180).
     """
     # 1. Override — split heat/cool dead-band (skipped when presence-away suppresses it)
     if (override_heat is not None or override_cool is not None) and (override_until is None or ts < override_until):
@@ -242,6 +244,30 @@ def resolve_targets_at_time(
             return TargetTemps(heat=None, cool=None)
         return TargetTemps(heat=eco_heat, cool=eco_cool)
     # 3. Schedule blocks
+    targets = _schedule_targets_at_time(
+        ts, schedule_blocks, comfort_heat, comfort_cool, eco_heat, eco_cool, block_temp_converter, schedule_off_action
+    )
+    return cap_to_eco(targets, eco_heat, eco_cool) if room_vacant else targets
+
+
+def cap_to_eco(targets: TargetTemps, eco_heat: float, eco_cool: float) -> TargetTemps:
+    """Lower the demand of *targets* to at most eco; never raise it, "off" sides stay off."""
+    return TargetTemps(
+        heat=min(targets.heat, eco_heat) if targets.heat is not None else None,
+        cool=max(targets.cool, eco_cool) if targets.cool is not None else None,
+    )
+
+
+def _schedule_targets_at_time(
+    ts: float,
+    schedule_blocks: dict | None,
+    comfort_heat: float,
+    comfort_cool: float,
+    eco_heat: float,
+    eco_cool: float,
+    block_temp_converter: Callable[[float], float] | None,
+    schedule_off_action: str,
+) -> TargetTemps:
     if schedule_blocks is None:
         return TargetTemps(heat=comfort_heat, cool=comfort_cool)
     data = find_active_block(schedule_blocks, ts)
@@ -402,6 +428,7 @@ def make_target_resolver(
     hass: HomeAssistant | None = None,
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
+    room_vacant: bool = False,
 ) -> Callable[[float], TargetTemps]:
     """Create a sync target resolver function (schedule blocks pre-fetched).
 
@@ -447,6 +474,7 @@ def make_target_resolver(
             presence_away_action=presence_away_action,
             schedule_off_action=schedule_off_action,
             presence_clears_override=presence_clears_override,
+            room_vacant=room_vacant,
         )
         if targets.heat is None and targets.cool is None:
             return targets

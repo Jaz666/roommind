@@ -3165,3 +3165,49 @@ def test_clear_sky_peak_today_follows_the_season():
     winter = clear_sky_peak_today(52.5, 13.4, datetime(2026, 1, 12, 9, tzinfo=UTC).timestamp())
     assert 0.7 < summer < 1.0
     assert winter < 0.4 * summer
+
+
+def test_occupancy_eco_schema_range():
+    """occupancy_eco_delay is limited to 5..240 minutes (#180)."""
+    import voluptuous as vol
+
+    schema = websocket_save_room._ws_schema
+    base = {"type": "roommind/rooms/save", "id": 1, "area_id": "office"}
+    result = schema({**base, "occupancy_eco_enabled": True, "occupancy_eco_delay": "30"})
+    assert result["occupancy_eco_enabled"] is True
+    assert result["occupancy_eco_delay"] == 30
+    for bad in (0, 4, 241):
+        with pytest.raises(vol.Invalid):
+            schema({**base, "occupancy_eco_delay": bad})
+
+
+@pytest.mark.asyncio
+async def test_save_room_occupancy_eco_roundtrip(ws_hass, store, connection):
+    await store.async_load()
+    msg = {
+        "id": 10,
+        "type": "roommind/rooms/save",
+        "area_id": "office",
+        "occupancy_eco_enabled": True,
+        "occupancy_eco_delay": 5,
+    }
+    await _save_room(ws_hass, connection, msg)
+    stored = store.get_room("office")
+    assert stored["occupancy_eco_enabled"] is True
+    assert stored["occupancy_eco_delay"] == 5
+
+
+@pytest.mark.asyncio
+async def test_list_rooms_forwards_occupancy_vacant(ws_hass, store, connection):
+    """The dashboard shows the empty-room icon from rooms/list (#180)."""
+    await store.async_load()
+    await _save_room(ws_hass, connection, {"id": 2, "type": "roommind/rooms/save", "area_id": "office"})
+    mock_coordinator = MagicMock()
+    mock_coordinator.rooms = {"office": {"occupancy_vacant": True}}
+    mock_coordinator.async_request_refresh = AsyncMock()
+    ws_hass.data[DOMAIN]["coordinator"] = mock_coordinator
+
+    await _list_rooms(ws_hass, connection, {"id": 3, "type": "roommind/rooms/list"})
+
+    rooms = connection.send_result.call_args[0][1]["rooms"]
+    assert rooms["office"]["live"]["occupancy_vacant"] is True

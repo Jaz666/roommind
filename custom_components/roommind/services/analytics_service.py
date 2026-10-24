@@ -95,6 +95,7 @@ async def _compute_target_forecast(
     hours: float = 3.0,
     interval_minutes: int = 5,
     schedule_blocks_cache: dict[str, dict] | None = None,
+    room_vacant: bool = False,
 ) -> list[dict]:
     """Compute target temperature forecast for the next N hours.
 
@@ -152,6 +153,7 @@ async def _compute_target_forecast(
             presence_away_action=settings.get("presence_away_action", "eco"),
             schedule_off_action=settings.get("schedule_off_action", "eco"),
             presence_clears_override=bool(settings.get("presence_clears_override", False)),
+            room_vacant=room_vacant,
         )
         heat_target = targets.heat
         cool_target = targets.cool
@@ -283,9 +285,11 @@ async def build_analytics_data(
     # Build merged forecast: same format as history points, on a shared 5-min grid
     room_config = store.get_room(area_id) or {}
     mold_delta = 0.0
+    room_vacant = False
     if coordinator:
         live = coordinator.rooms.get(area_id, {})
         mold_delta = live.get("mold_prevention_delta", 0.0)
+        room_vacant = bool(live.get("occupancy_vacant", False))
     try:
         target_forecast = await _compute_target_forecast(
             hass,
@@ -293,6 +297,7 @@ async def build_analytics_data(
             settings,
             mold_prevention_delta=mold_delta,
             schedule_blocks_cache=getattr(coordinator, "_schedule_blocks_cache", None),
+            room_vacant=room_vacant,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Target forecast computation failed for '%s'", area_id)

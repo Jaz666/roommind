@@ -51,6 +51,10 @@ DEFAULT_COMFORT_COOL = 24.0
 DEFAULT_ECO_HEAT = 17.0
 DEFAULT_ECO_COOL = 27.0
 
+# Minutes all occupancy sensors must report "off" before an empty room drops to eco (#180)
+DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES = 15
+# Shorter delays flip the target on every motion-sensor edge and flood battery TRVs with setpoints
+MIN_OCCUPANCY_ECO_DELAY_MINUTES = 5
 
 # Context identifier for RoomMind-initiated service calls.
 # Automations can check: trigger.context.parent_id == "roommind"
