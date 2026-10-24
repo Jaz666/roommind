@@ -982,10 +982,13 @@ export class RsSensorSection extends LitElement {
   }
 
   private _onOccupancyEcoDelayChange = (e: Event) => {
-    const parsed = parseInt((e.target as HTMLInputElement).value);
+    const field = e.target as HTMLInputElement;
+    const parsed = parseInt(field.value);
     const value = Number.isNaN(parsed)
       ? DEFAULT_OCCUPANCY_ECO_DELAY
       : Math.min(240, Math.max(MIN_OCCUPANCY_ECO_DELAY, parsed));
+    // A clamped value equal to the stored one does not re-render, the field would keep the raw input.
+    field.value = String(value);
     this._fireSensorChanged("occupancy_eco_delay", value);
   };
 

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
+
+from custom_components.roommind.utils import schedule_utils
 
 from .conftest import (
     SAMPLE_ROOM,
@@ -92,3 +94,11 @@ async def test_schedule_off_action_off_is_not_raised_to_eco(hass, mock_config_en
         schedule_state="off",
     )
     assert room["force_off"] is True
+
+
+@pytest.mark.asyncio
+async def test_mpc_horizon_sees_the_empty_room(hass, mock_config_entry):
+    """The resolver for the MPC horizon gets the vacancy too, else it pre-heats an empty room."""
+    with patch.object(schedule_utils, "make_target_resolver", wraps=schedule_utils.make_target_resolver) as resolver:
+        await _run(hass, mock_config_entry, OCCUPANCY_ROOM)
+    assert resolver.call_args.kwargs["room_vacant"] is True
