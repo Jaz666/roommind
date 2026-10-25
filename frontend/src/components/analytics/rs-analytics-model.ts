@@ -13,6 +13,8 @@ export class RsAnalyticsModel extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public data: AnalyticsData | null = null;
   @property({ type: String }) public language = "en";
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
+  @property({ type: Boolean }) public managed = false;
 
   @state() private _expandedStat: string | null = null;
 
@@ -47,6 +49,7 @@ export class RsAnalyticsModel extends LitElement {
       labelKey: TranslationKey,
       unit: string,
       infoKey: TranslationKey,
+      sub?: string,
     ) => {
       statItems.push({ id, labelKey, infoKey });
       const active = this._expandedStat === id;
@@ -55,6 +58,7 @@ export class RsAnalyticsModel extends LitElement {
           <div class="stat-content">
             <span class="model-value ${value === ph ? "pending" : ""}">${value}</span>
             <span class="model-label">${localize(labelKey, l)}${unit ? ` (${unit})` : ""}</span>
+            ${sub ? html`<span class="model-sub">${sub}</span>` : nothing}
           </div>
           <ha-icon
             class="info-icon ${active ? "info-active" : ""}"
@@ -98,14 +102,24 @@ export class RsAnalyticsModel extends LitElement {
             <div class="confidence-bar">
               <div class="confidence-fill" style="width: ${hasModel ? confidencePct : 0}%"></div>
             </div>
-            <div class="control-mode-badge ${mpcActive ? "mpc" : "bangbang"}">
-              <ha-icon icon=${mpcActive ? "mdi:brain" : "mdi:school-outline"}></ha-icon>
-              ${
-                mpcActive
-                  ? localize("analytics.control_mode_mpc", l)
-                  : localize("analytics.control_mode_bangbang", l)
-              }
-            </div>
+            ${
+              // Managed rooms (no external sensor) never run MPC, so "learning" would stay forever.
+              this.managed
+                ? nothing
+                : this.controlMode === "bangbang"
+                  ? html`<div class="control-mode-badge bangbang">
+                      <ha-icon icon="mdi:power"></ha-icon>
+                      ${localize("settings.control_mode_simple", l)}
+                    </div>`
+                  : html`<div class="control-mode-badge ${mpcActive ? "mpc" : "bangbang"}">
+                      <ha-icon icon=${mpcActive ? "mdi:brain" : "mdi:school-outline"}></ha-icon>
+                      ${
+                        mpcActive
+                          ? localize("analytics.control_mode_mpc", l)
+                          : localize("analytics.control_mode_bangbang", l)
+                      }
+                    </div>`
+            }
             ${
               this._expandedStat === "confidence"
                 ? html`<div class="info-panel stat-info-panel">
@@ -172,6 +186,7 @@ export class RsAnalyticsModel extends LitElement {
                     "analytics.solar_gain",
                     "",
                     "analytics.info.solar_gain",
+                    this._solarSub(m),
                   )
                 : nothing
             }
@@ -229,6 +244,14 @@ export class RsAnalyticsModel extends LitElement {
         </div>
       </ha-card>
     `;
+  }
+
+  private _solarSub(m: AnalyticsData["model"] | undefined): string | undefined {
+    if (m?.solar_gain_now == null || m.solar_gain_today_max == null) return undefined;
+    const fmt = (v: number) => toDisplayDelta(v, this.hass).toFixed(1) + tempUnit(this.hass) + "/h";
+    return localize("analytics.solar_gain_sub", this.language)
+      .replace("{now}", fmt(m.solar_gain_now))
+      .replace("{today}", fmt(m.solar_gain_today_max));
   }
 
   private _toggleStat(id: string) {
@@ -379,6 +402,11 @@ export class RsAnalyticsModel extends LitElement {
 
       .model-label {
         font-size: 12px;
+        color: var(--secondary-text-color);
+      }
+
+      .model-sub {
+        font-size: 11px;
         color: var(--secondary-text-color);
       }
 

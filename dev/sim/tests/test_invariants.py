@@ -5,10 +5,13 @@ from __future__ import annotations
 from helpers import scenario
 
 from roommind_sim.analysis.invariants import (
+    hold_shows_running_unit,
     max_commands_per_hour,
     min_run_commanded,
+    min_run_hold_keeps_setpoint,
     min_run_respected,
     no_cooling_below_outdoor_min,
+    no_full_cooling_at_target,
     target_never_empty,
     window_open_pauses,
 )
@@ -103,6 +106,16 @@ def test_window_open_pause():
     assert window_open_pauses(run) == []
 
 
+def test_window_open_pause_allows_resume_between_close_and_next_sample():
+    """Windows close between two samples; a resume in that gap is not a violation."""
+    run = _run([False] * 30, windows=[False] * 5 + [True] * 15 + [False] * 10)
+    end = run.start + 60 * 21  # first sample that shows the window closed
+    run.observer = [{"t": end - 30, "rooms": {"r": {"mode": "heating"}}}]
+    assert window_open_pauses(run) == []
+    run.observer = [{"t": end - 90, "rooms": {"r": {"mode": "heating"}}}]
+    assert len(window_open_pauses(run)) == 1
+
+
 def test_command_rate():
     run = _run([False] * 70, commands=[(30 * i, "set_temperature", {"temperature": 22}) for i in range(20)])
     assert max_commands_per_hour(run, limit=12)
@@ -141,3 +154,108 @@ def test_commanded_min_run_counts_per_group():
     assert min_run_commanded(run) == []
     events[3]["t"] = t0 + 600  # whole group off after 10 min
     assert len(min_run_commanded(run)) == 1
+
+
+def _hold_run(setpoints, heat_targets=(21.0, 21.0), cool_target=None, climate_mode="heat_only", current_temp=21.2):  # noqa: ANN001
+    """Heat at 30 °C, the room goes idle into the min-run hold, then ``setpoints`` are sent."""
+    run = _run(
+        [False] * 30,
+        commands=[(60, "set_temperature", {"temperature": 30.0, "hvac_mode": "heat"})]
+        + [(120 + 30 * i, "set_temperature", {"temperature": v}) for i, v in enumerate(setpoints)],
+    )
+    run.storage["rooms"]["r"]["climate_mode"] = climate_mode
+    room = {"heat_target": heat_targets[0], "cool_target": cool_target, "current_temp": current_temp}
+    run.observer = [{"t": run.start + 90, "rooms": {"r": {**room, "mode": "heating"}}}] + [
+        {
+            "t": run.start + 150 + 30 * i,
+            "rooms": {
+                "r": {**room, "heat_target": heat_targets[1], "mode": "idle", "compressor_protection_active": True}
+            },
+        }
+        for i in range(len(setpoints))
+    ]
+    return run
+
+
+def test_hold_must_not_cut_the_setpoint_to_the_target_436():
+    assert len(min_run_hold_keeps_setpoint(_hold_run([21.0]))) == 1
+    assert min_run_hold_keeps_setpoint(_hold_run([])) == []
+    assert min_run_hold_keeps_setpoint(_hold_run([30.0])) == []
+
+
+def test_hold_passes_a_lowered_target_on():
+    assert min_run_hold_keeps_setpoint(_hold_run([17.0], heat_targets=(21.0, 17.0))) == []
+
+
+def test_hold_band_overshoot_may_send_the_target():
+    run = _hold_run([21.0], cool_target=21.5, climate_mode="auto", current_temp=21.5)
+    assert min_run_hold_keeps_setpoint(run) == []
+
+
+def test_hold_may_throttle_past_the_margin_but_not_below_the_target():
+    assert min_run_hold_keeps_setpoint(_hold_run([23.0], current_temp=21.5)) == []
+    assert min_run_hold_keeps_setpoint(_hold_run([21.0], current_temp=21.6)) == []
+    assert len(min_run_hold_keeps_setpoint(_hold_run([23.0], current_temp=21.4))) == 1
+    assert len(min_run_hold_keeps_setpoint(_hold_run([20.0], current_temp=21.6))) == 1
+
+
+def test_hold_throttle_is_not_allowed_in_a_room_with_both_sides():
+    run = _hold_run([23.0], cool_target=24.0, climate_mode="auto", current_temp=21.6)
+    assert len(min_run_hold_keeps_setpoint(run)) == 1
+    run = _hold_run([23.0], cool_target=None, climate_mode="auto", current_temp=21.6)
+    assert min_run_hold_keeps_setpoint(run) == []
+
+
+def test_hold_is_found_by_the_decision_while_the_room_shows_the_running_unit_452():
+    run = _hold_run([21.0])
+    for o in run.observer[1:]:
+        o["rooms"]["r"].update(mode="heating", commanded_mode="idle")
+    assert len(min_run_hold_keeps_setpoint(run)) == 1
+
+
+def _shown_hold_run(shown: str, action: str = "heating", left_s: float | None = 600.0) -> RunData:
+    run = _run([True] * 10)
+    for smp in run.samples:
+        smp["devices"][AC].update(mode="heat", action=action)
+    t = run.start + 300
+    room = {
+        "mode": shown,
+        "commanded_mode": "idle",
+        "compressor_protection_reason": "min_run",
+        "compressor_protection_until": t + left_s if left_s is not None else None,
+    }
+    run.observer = [{"t": t, "rooms": {"r": room}}]
+    return run
+
+
+def test_hold_shows_the_running_unit_and_the_time_left_452():
+    assert hold_shows_running_unit(_shown_hold_run("heating")) == []
+    assert hold_shows_running_unit(_shown_hold_run("idle", action="idle")) == []
+    found = hold_shows_running_unit(_shown_hold_run("idle"))
+    assert len(found) == 1 and "held unit heating, room shows idle" in found[0].detail
+    found = hold_shows_running_unit(_shown_hold_run("heating", left_s=None))
+    assert len(found) == 1 and "without time left" in found[0].detail
+
+
+def test_setpoint_drop_outside_the_hold_is_fine():
+    run = _hold_run([21.0])
+    for o in run.observer:
+        o["rooms"]["r"]["compressor_protection_active"] = False
+    assert min_run_hold_keeps_setpoint(run) == []
+
+
+def _cooling_observer(t: float, temp: float) -> dict:
+    return {"t": t, "rooms": {"r": {"mpc_active": True, "current_temp": temp, "cool_target": 24.5}}}
+
+
+def test_lowest_cool_setpoint_at_the_target_450():
+    probe = _run([False] * 10)
+    t0 = probe.scenario.start
+    cool = {"temperature": 16.0, "hvac_mode": "cool"}
+    observer = [_cooling_observer(t0 + 30, 24.4), _cooling_observer(t0 + 330, 24.7)]
+    at_target = _run([False] * 10, commands=[(10, "set_temperature", cool)], observer=observer)
+    assert no_full_cooling_at_target(at_target)
+    above = _run([False] * 10, commands=[(310, "set_temperature", cool)], observer=observer)
+    assert not no_full_cooling_at_target(above)
+    gentle = _run([False] * 10, commands=[(10, "set_temperature", {**cool, "temperature": 23.3})], observer=observer)
+    assert not no_full_cooling_at_target(gentle)

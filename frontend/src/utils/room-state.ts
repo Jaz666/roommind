@@ -90,3 +90,9 @@ export function coolingProtectionStatus(live: RoomLiveData | undefined, language
       };
   }
 }
+
+/** Whole minutes until a Unix timestamp, floored at 1 so a badge never reads "0 min". */
+export function minutesLeft(until: number | null): number {
+  if (until == null) return 1;
+  return Math.max(1, Math.ceil((until * 1000 - Date.now()) / 60000));
+}

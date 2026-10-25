@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.roommind.const import DOMAIN
 from custom_components.roommind.store import RoomMindStore
@@ -94,7 +94,7 @@ async def test_websocket_save_list_summary_assign_and_delete(hass, scheduled_sto
     assert conn.send_result.call_args.args[1]["schedules"][sid]["area_ids"] == ["bedroom"]
     with patch(
         "custom_components.roommind.websocket_api.time.time",
-        return_value=datetime(2026, 7, 6, 8, tzinfo=ZoneInfo("UTC")).timestamp(),
+        return_value=datetime(2026, 7, 6, 8, tzinfo=dt_util.get_default_time_zone()).timestamp(),
     ):
         await websocket_list_rooms.__wrapped__(hass, conn, {"id": 3})
     result = conn.send_result.call_args.args[1]
@@ -132,7 +132,7 @@ async def test_missing_room_schedule_is_rejected_and_reported(hass, scheduled_st
 async def test_override_until_next_schedule_change(hass, scheduled_store):
     store = scheduled_store
     await store.async_save_schedule("bedrooms", validate_schedule("Bedrooms", week()), ["bedroom"], 0)
-    now = datetime(2026, 7, 6, 21, tzinfo=ZoneInfo("UTC")).timestamp()
+    now = datetime(2026, 7, 6, 21, tzinfo=dt_util.get_default_time_zone()).timestamp()
     conn = MagicMock()
     with patch("custom_components.roommind.websocket_api.time.time", return_value=now):
         await websocket_override_set.__wrapped__(

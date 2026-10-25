@@ -10,6 +10,7 @@ import { masterDetailStyles } from "../styles/master-detail-styles";
 import { inputStyles } from "../styles/input-styles";
 import "./shared/rs-master-detail";
 import "./shared/rs-info-icon";
+import "./shared/rs-toggle-row";
 
 /**
  * UI-only sentinel for "inherit the global setting".  ha-select cannot render an
@@ -302,6 +303,17 @@ export class RsDeviceSection extends LitElement {
         --mdc-icon-size: 12px;
       }
 
+      .detail-section-label {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 10px 0 4px 0;
+        border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
+        margin-top: 4px;
+      }
+
       /* View mode styles */
       .view-row {
         display: flex;
@@ -414,7 +426,11 @@ export class RsDeviceSection extends LitElement {
       device?.idle_action === "fan_only" ||
       device?.idle_action === "setback" ||
       device?.idle_action === "low";
-    const showDirectBadge = device?.setpoint_mode === "direct" && !!this.selectedTempSensor;
+    const hasValve =
+      device?.type === "trv" && !!device?.valve_opening_entity && !!device?.valve_closing_entity;
+    const showDirectBadge =
+      device?.setpoint_mode === "direct" && !!this.selectedTempSensor && !hasValve;
+    const showValveBadge = hasValve && !!this.selectedTempSensor;
 
     return html`
       <div class="view-row">
@@ -440,6 +456,14 @@ export class RsDeviceSection extends LitElement {
           showDirectBadge
             ? html`<span class="valve-exclude-badge">
                 ${localize("devices.setpoint_mode_direct", this.hass.language)}
+              </span>`
+            : nothing
+        }
+        ${
+          showValveBadge
+            ? html`<span class="valve-exclude-badge">
+                <ha-icon icon="mdi:valve"></ha-icon>
+                ${localize("devices.valve_direct_badge", this.hass.language)}
               </span>`
             : nothing
         }
@@ -654,7 +678,9 @@ export class RsDeviceSection extends LitElement {
                 : nothing
             }
             ${
-              device?.setpoint_mode === "direct" && this.selectedTempSensor
+              device?.setpoint_mode === "direct" &&
+              this.selectedTempSensor &&
+              !(device.type === "trv" && device.valve_opening_entity && device.valve_closing_entity)
                 ? html`<span class="meta-pill"
                     >${localize("devices.setpoint_mode_direct", this.hass.language)}</span
                   >`
@@ -682,6 +708,18 @@ export class RsDeviceSection extends LitElement {
     const supportsFanOnly = hvacModes.includes("fan_only");
     const isExcluded = this.valveProtectionExclude.has(entityId);
     const lang = this.hass.language;
+    const deviceNumbers = isThermostat ? this._deviceNumberEntities(entityId) : [];
+    const hasValve = isThermostat && !!device.valve_opening_entity && !!device.valve_closing_entity;
+    // Direct valve control needs the room sensor (Full Control); offered only when the TRV has number entities
+    const showValveFields =
+      isThermostat && !!this.selectedTempSensor && (deviceNumbers.length > 0 || hasValve);
+    // A recognised pair needs no entity picking: one switch, the pickers stay for anything else
+    const valvePair = this._detectValvePair(deviceNumbers);
+    const valveAsToggle =
+      !!valvePair &&
+      (!device.valve_opening_entity ||
+        (device.valve_opening_entity === valvePair[0] &&
+          device.valve_closing_entity === valvePair[1]));
 
     return html`
       <div class="detail-head">
@@ -952,7 +990,7 @@ export class RsDeviceSection extends LitElement {
           : nothing
       }
       ${
-        this.selectedTempSensor
+        this.selectedTempSensor && !hasValve
           ? html`
               <div class="detail-field with-info">
                 <ha-select
@@ -1034,6 +1072,58 @@ export class RsDeviceSection extends LitElement {
             `
           : nothing
       }
+      ${
+        showValveFields && valveAsToggle
+          ? html`
+              <div class="detail-field">
+                <rs-toggle-row
+                  .label=${localize("devices.valve_direct_control", lang)}
+                  .hint=${localize("devices.valve_direct_control_toggle_hint", lang)}
+                  .checked=${hasValve}
+                  @toggle-changed=${(e: CustomEvent<boolean>) =>
+                    this._onValveToggle(entityId, e.detail ? valvePair : null)}
+                ></rs-toggle-row>
+              </div>
+            `
+          : nothing
+      }
+      ${
+        showValveFields && !valveAsToggle
+          ? html`
+              <div class="detail-section-label">
+                ${localize("devices.valve_direct_control", lang)}
+              </div>
+              <div class="detail-field with-info">
+                <ha-entity-picker
+                  .hass=${this.hass}
+                  .includeDomains=${["number"]}
+                  .includeEntities=${deviceNumbers.length ? deviceNumbers : undefined}
+                  .value=${device.valve_opening_entity ?? ""}
+                  .label=${localize("devices.valve_opening_entity", lang)}
+                  @value-changed=${(e: CustomEvent) =>
+                    this._onValveOpeningChange(entityId, e.detail.value as string, deviceNumbers)}
+                ></ha-entity-picker>
+                <rs-info-icon
+                  .text=${localize("devices.valve_direct_control_hint", lang)}
+                ></rs-info-icon>
+              </div>
+              <div class="detail-field with-info">
+                <ha-entity-picker
+                  .hass=${this.hass}
+                  .includeDomains=${["number"]}
+                  .includeEntities=${deviceNumbers.length ? deviceNumbers : undefined}
+                  .value=${device.valve_closing_entity ?? ""}
+                  .label=${localize("devices.valve_closing_entity", lang)}
+                  @value-changed=${(e: CustomEvent) =>
+                    this._onValveClosingChange(entityId, e.detail.value as string)}
+                ></ha-entity-picker>
+                <rs-info-icon
+                  .text=${localize("devices.valve_closing_entity_hint", lang)}
+                ></rs-info-icon>
+              </div>
+            `
+          : nothing
+      }
     `;
   }
 
@@ -1082,6 +1172,11 @@ export class RsDeviceSection extends LitElement {
       // schema rejects it. Reset when switching to TRV so the next save does not fail.
       if (deviceType === "trv" && updated.coil_dry === "on") {
         updated.coil_dry = "inherit";
+      }
+      // Direct valve control is TRV-only; the backend schema rejects it for ACs.
+      if (deviceType === "ac") {
+        delete updated.valve_opening_entity;
+        delete updated.valve_closing_entity;
       }
       return updated;
     });
@@ -1166,6 +1261,74 @@ export class RsDeviceSection extends LitElement {
   private _onCoilDryFanModeChange(entityId: string, value: string) {
     this._fireDeviceChanged(
       this.devices.map((d) => (d.entity_id === entityId ? { ...d, coil_dry_fan_mode: value } : d)),
+    );
+  }
+
+  /** Valve number entities of the TRV's own device (opening/closing degree live there). */
+  private _deviceNumberEntities(entityId: string): string[] {
+    const deviceId = this.hass.entities?.[entityId]?.device_id;
+    if (!deviceId) return [];
+    const numbers = Object.values(this.hass.entities)
+      .filter((e) => e.device_id === deviceId && e.entity_id.startsWith("number."))
+      .map((e) => e.entity_id);
+    // Not every number of a TRV is a valve degree (calibration, external temperature input);
+    // renamed or translated entity ids fall back to all numbers of the device
+    const valve = numbers.filter((eid) => /valve|opening|closing|ventil|vanne/.test(eid));
+    return valve.length ? valve : numbers;
+  }
+
+  /** Opening and closing degree of the device, recognised by name (Zigbee2MQTT: *_valve_opening_degree). */
+  private _detectValvePair(numbers: string[]): [string, string] | null {
+    for (const opening of numbers) {
+      if (!opening.includes("opening")) continue;
+      const closing = opening.replace(/opening/g, "closing");
+      if (numbers.includes(closing)) return [opening, closing];
+    }
+    return null;
+  }
+
+  private _onValveToggle(entityId: string, pair: [string, string] | null): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        delete updated.valve_opening_entity;
+        delete updated.valve_closing_entity;
+        if (pair) [updated.valve_opening_entity, updated.valve_closing_entity] = pair;
+        return updated;
+      }),
+    );
+  }
+
+  private _onValveOpeningChange(entityId: string, value: string, deviceNumbers: string[]): void {
+    // The closing degree sits next to the opening degree (Zigbee2MQTT: *_valve_closing_degree)
+    const sibling = value.replace(/opening/g, "closing");
+    const closing = sibling !== value && deviceNumbers.includes(sibling) ? sibling : "";
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        if (!value) {
+          delete updated.valve_opening_entity;
+          delete updated.valve_closing_entity;
+          return updated;
+        }
+        updated.valve_opening_entity = value;
+        if (!updated.valve_closing_entity && closing) updated.valve_closing_entity = closing;
+        return updated;
+      }),
+    );
+  }
+
+  private _onValveClosingChange(entityId: string, value: string): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        if (value) updated.valve_closing_entity = value;
+        else delete updated.valve_closing_entity;
+        return updated;
+      }),
     );
   }
 

@@ -185,3 +185,47 @@ async def test_open_window_stops_ac_even_during_shared_minimum_run(hass, mock_co
     await update(coordinator)
     assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
     assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_heat_only_without_orchestration_does_not_claim_shared_direction(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    store.get_rooms.return_value["living"]["heat_source_orchestration"] = False
+    live = await update(coordinator, hour=12)
+    assert any(c.get("hvac_mode") == "cool" for c in calls(hass, B))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert live["living"]["mode"] == "heating"
+
+
+@pytest.mark.parametrize("idle_action", ["off", "low"])
+async def test_cooling_interlock_closes_a_direct_valve_hold(hass, mock_config_entry, idle_action):
+    from custom_components.roommind.control.direct_valve import async_set_valve
+
+    coordinator, store = setup(hass, mock_config_entry, states={B: "cool"})
+    opening, closing = "number.bedroom_open", "number.bedroom_close"
+    store.get_rooms.return_value["bedroom"]["devices"][0].update(
+        valve_opening_entity=opening, valve_closing_entity=closing, idle_action=idle_action
+    )
+    original = hass.states.get
+
+    def states(eid):
+        if eid in (opening, closing):
+            return make_mock_states_get(
+                extra={
+                    opening: ("60", {"min": 0, "max": 100, "step": 1}),
+                    closing: ("40", {"min": 0, "max": 100, "step": 1}),
+                }
+            )(eid)
+        return original(eid)
+
+    hass.states.get = states
+    await async_set_valve(hass, BT, opening, closing, 60, area_id="bedroom")
+    hass.services.async_call.reset_mock()
+    live = await update(coordinator)
+    numbers = [c.args[2] for c in hass.services.async_call.call_args_list if c.args[0] == "number"]
+    assert {"entity_id": opening, "value": 0.0} in numbers
+    assert {"entity_id": closing, "value": 100.0} in numbers
+    assert live["bedroom"]["heating_blocked_by_cooling"]
+
+    if idle_action == "low":
+        assert not any(c.get("hvac_mode") == "off" for c in calls(hass, BT))
+        assert any(c.get("temperature") == 5 for c in calls(hass, BT))

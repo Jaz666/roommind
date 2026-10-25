@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, VERSION
+from .const import DEFAULT_CONTROL_MODE, DOMAIN, VERSION
 from .control.mpc_controller import _active_targets, _last_commands, _now, _sent_at
 from .utils.history_store import DETAIL_FIELDS
 
@@ -37,6 +37,7 @@ def _build_model_info(estimator: Any) -> dict[str, Any]:
         "alpha": round(estimator._x[1], 6),
         "beta_h": round(estimator._x[2], 4),
         "beta_c": round(estimator._x[3], 4),
+        "beta_f": round(estimator._x[6], 4),
         "n_updates": estimator._n_updates,
         "n_idle": estimator._n_idle,
         "n_heating": estimator._n_heating,
@@ -68,6 +69,8 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "coil_dry_minutes": dev.get("coil_dry_minutes", 0),
             "coil_dry_mode": dev.get("coil_dry_mode", ""),
             "coil_dry_fan_mode": dev.get("coil_dry_fan_mode", ""),
+            "valve_opening_entity": dev.get("valve_opening_entity", ""),
+            "valve_closing_entity": dev.get("valve_closing_entity", ""),
         }
         if state:
             attrs = state.attributes
@@ -291,6 +294,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
                 ),
                 4,
             )
+            live_diag["q_rebound"] = round(coordinator._rebound_tracker.get_charge(area_id), 4)
 
         # Schedule entity state
         schedules = config.get("schedules", [])
@@ -410,7 +414,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
             "latitude": round(hass.config.latitude),
             "longitude": round(hass.config.longitude),
         },
-        "settings": dict(settings),
+        "settings": {"control_mode": DEFAULT_CONTROL_MODE, **settings},
         "rooms": rooms_diag,
         "outdoor": outdoor,
         "recent_history": recent_history,
@@ -418,6 +422,8 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
         "compressor_groups": compressor,
         "valve_protection": valve,
         "coil_dry_state": (coordinator._coil_dry_manager.get_state() if coordinator is not None else {}),
+        # Live AC sensor offsets {entity: {"heat"|"cool"|"idle": [offset K, readings]}}; settings hold the last save
+        "ac_head_offsets": (coordinator._head_offsets.get_state() if coordinator is not None else {}),
         "presence": {
             "enabled": settings.get("presence_enabled", False),
             "persons": settings.get("presence_persons", []),

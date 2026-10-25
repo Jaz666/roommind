@@ -47,7 +47,11 @@ async def test_external_cooling_closes_radiator_without_touching_ac(hass, mock_c
     assert live["heating_blocked_by_cooling"]
     assert live["cooling_interlock_reason"] == "cooling"
     assert live["commanded_mode"] == "idle"
-    assert ("set_hvac_mode", {"entity_id": TRV, "hvac_mode": "off"}) in climate_calls(hass, TRV)
+    if idle_action == "low":
+        # Preserve the min-temperature policy for TRVs that sleep deeply when off.
+        assert ("set_temperature", {"entity_id": TRV, "temperature": 5.0}) in climate_calls(hass, TRV)
+    else:
+        assert ("set_hvac_mode", {"entity_id": TRV, "hvac_mode": "off"}) in climate_calls(hass, TRV)
     assert not any(d.get("hvac_mode") == "heat" for _, d in climate_calls(hass, TRV))
     assert climate_calls(hass, AC) == []
     coordinator._ekf_training.process.assert_not_called()

@@ -1,7 +1,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, HassArea, RoomConfig, OverrideType } from "../types";
-import { getModeClass, formatMode, coolingProtectionStatus } from "../utils/room-state";
+import {
+  getModeClass,
+  formatMode,
+  coolingProtectionStatus,
+  minutesLeft,
+} from "../utils/room-state";
 import { modeStyles } from "../styles/shared-mode-styles";
 import { localize } from "../utils/localize";
 import { formatTemp, tempUnit, toDisplayDelta } from "../utils/temperature";
@@ -358,12 +363,6 @@ export class RsHeroStatus extends LitElement {
     return null;
   }
 
-  /** Whole minutes left, floored at 1 so the badge never reads "0 min". */
-  private _coilDryMinutesLeft(until: number | null): number {
-    if (until == null) return 1;
-    return Math.max(1, Math.ceil((until * 1000 - Date.now()) / 60000));
-  }
-
   private _renderTargetSection(live: NonNullable<RoomConfig["live"]>) {
     const targetTemp = live.target_temp;
     const l = this.hass?.language ?? "en";
@@ -701,17 +700,17 @@ export class RsHeroStatus extends LitElement {
                   live.compressor_protection_active && !this.isOutdoor
                     ? html`<div class="hero-metric info">
                         <ha-icon icon="mdi:timer-sand"></ha-icon>
-                        ${
+                        ${localize(
                           live.compressor_protection_reason === "min_run"
-                            ? localize(
-                                "hero.compressor_protection_min_run",
-                                this.hass?.language ?? "en",
-                              )
-                            : localize(
-                                "hero.compressor_protection_min_off",
-                                this.hass?.language ?? "en",
-                              )
-                        }
+                            ? live.compressor_protection_until != null
+                              ? "hero.compressor_protection_min_run_left"
+                              : "hero.compressor_protection_min_run"
+                            : live.compressor_protection_until != null
+                              ? "hero.compressor_protection_min_off_left"
+                              : "hero.compressor_protection_min_off",
+                          this.hass?.language ?? "en",
+                          { minutes: minutesLeft(live.compressor_protection_until) },
+                        )}
                         <rs-info-icon
                           icon="mdi:information-outline"
                           .text=${localize(
@@ -729,7 +728,7 @@ export class RsHeroStatus extends LitElement {
                         ${localize(
                           live.coil_dry_phase === "drain" ? "hero.coil_dry_drain" : "hero.coil_dry",
                           this.hass?.language ?? "en",
-                          { minutes: this._coilDryMinutesLeft(live.coil_dry_until) },
+                          { minutes: minutesLeft(live.coil_dry_until) },
                         )}
                         <rs-info-icon
                           icon="mdi:information-outline"
@@ -753,6 +752,15 @@ export class RsHeroStatus extends LitElement {
                         ${localize("room.mold_surface_rh", this.hass?.language ?? "en", {
                           value: String(live.mold_surface_rh.toFixed(0)),
                         })}
+                        ${
+                          live.mold_surface_temp != null
+                            ? html`·
+                              ${localize("room.mold_surface_temp", this.hass?.language ?? "en", {
+                                value: formatTemp(live.mold_surface_temp, this.hass),
+                                unit: tempUnit(this.hass),
+                              })}`
+                            : nothing
+                        }
                       </div>`
                     : nothing
                 }

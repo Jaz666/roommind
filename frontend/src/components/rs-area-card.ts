@@ -1,7 +1,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, HassArea, RoomConfig } from "../types";
-import { getModeClass, formatMode, coolingProtectionStatus } from "../utils/room-state";
+import {
+  getModeClass,
+  formatMode,
+  coolingProtectionStatus,
+  minutesLeft,
+} from "../utils/room-state";
 import { modeStyles } from "../styles/shared-mode-styles";
 import { localize } from "../utils/localize";
 import { mdiEyeOff } from "../utils/icons";
@@ -14,7 +19,7 @@ export class RsAreaCard extends LitElement {
   @property({ type: Number }) public climateEntityCount = 0;
   @property({ type: Number }) public tempSensorCount = 0;
   @property({ attribute: false }) public hass!: HomeAssistant;
-  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "bangbang";
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   @property({ type: Boolean }) public climateControlActive = true;
   @property({ type: Boolean }) public reordering = false;
   @property({ type: Boolean }) public canMoveUp = false;
@@ -207,6 +212,19 @@ export class RsAreaCard extends LitElement {
       .mpc-badge.learning {
         color: var(--secondary-text-color);
         background: rgba(158, 158, 158, 0.1);
+      }
+
+      .compressor-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 2px 8px 2px 6px;
+        border-radius: 10px;
+        --mdc-icon-size: 14px;
+        color: var(--info-color, #2196f3);
+        background: rgba(33, 150, 243, 0.12);
       }
 
       .mold-badge {
@@ -509,7 +527,8 @@ export class RsAreaCard extends LitElement {
       return html`<div class="waiting">${localize("card.waiting", this.hass.language)}</div>`;
     }
 
-    const showMpcIcon = this.controlMode === "mpc";
+    // Managed rooms (no external sensor) never run MPC, so "learning" would stay forever.
+    const showMpcIcon = this.controlMode === "mpc" && !!this.config?.temperature_sensor;
 
     return html`
       <div class="temp-section">
@@ -554,6 +573,20 @@ export class RsAreaCard extends LitElement {
                     delta: toDisplayDelta(live.mold_prevention_delta, this.hass).toFixed(0),
                     unit: tempUnit(this.hass),
                   })}
+                </span>`
+              : nothing
+          }
+          ${
+            live.compressor_protection_until != null
+              ? html`<span class="compressor-badge">
+                  <ha-icon icon="mdi:timer-sand"></ha-icon>
+                  ${localize(
+                    live.compressor_protection_reason === "min_run"
+                      ? "card.compressor_min_run"
+                      : "card.compressor_min_off",
+                    this.hass.language,
+                    { minutes: minutesLeft(live.compressor_protection_until) },
+                  )}
                 </span>`
               : nothing
           }
@@ -619,7 +652,9 @@ export class RsAreaCard extends LitElement {
         ${
           live.presence_away
             ? html`<ha-icon class="away-icon" icon="mdi:home-off-outline"></ha-icon>`
-            : nothing
+            : live.occupancy_vacant && !live.override_active
+              ? html`<ha-icon class="away-icon" icon="mdi:account-off-outline"></ha-icon>`
+              : nothing
         }
       </span>
     `;

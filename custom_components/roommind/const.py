@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import Context
 
 DOMAIN = "roommind"
-VERSION = "1.7.9b6"
+VERSION = "1.8.0b1"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -32,6 +32,12 @@ MODE_IDLE = "idle"
 MODE_HEATING = "heating"
 MODE_COOLING = "cooling"
 
+# Global control strategy (settings["control_mode"]). Missing value = MPC, which
+# is what every install ran before the setting was read by the controller.
+CONTROL_MODE_MPC = "mpc"
+CONTROL_MODE_BANGBANG = "bangbang"
+DEFAULT_CONTROL_MODE = CONTROL_MODE_MPC
+
 # Schedule states
 SCHEDULE_STATE_ON = "on"
 
@@ -45,6 +51,10 @@ DEFAULT_COMFORT_COOL = 24.0
 DEFAULT_ECO_HEAT = 17.0
 DEFAULT_ECO_COOL = 27.0
 
+# Minutes all occupancy sensors must report "off" before an empty room drops to eco (#180)
+DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES = 15
+# Shorter delays flip the target on every motion-sensor edge and flood battery TRVs with setpoints
+MIN_OCCUPANCY_ECO_DELAY_MINUTES = 5
 
 # Context identifier for RoomMind-initiated service calls.
 # Automations can check: trigger.context.parent_id == "roommind"
@@ -85,7 +95,24 @@ AC_BOOST_DELTA_MIN = 3.0  # Tightest AC setpoint cap (°C above/below target) at
 AC_BOOST_DELTA_MAX = 50.0  # Comfort-end AC cap (°C); finite value above any real device range so the cap never binds (inf would break the linear slider interpolation)
 PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to resend, in the gentle regime
 PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
+PROPORTIONAL_SETPOINT_DWELL_SECONDS = 300  # Minimum time a proportional setpoint stays on the device before a recomputed one replaces it (one MPC block, #317)
 BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
+# Direct valve control (#413): TRVs whose valve opening RoomMind sets through number entities
+VALVE_DWELL_SECONDS = 600  # Minimum time a valve position stays before a small correction moves the motor again
+VALVE_DEADBAND_PCT = 5  # Smaller position changes are not sent
+VALVE_OVERSHOOT_STOP_K = 0.5  # A modulating valve closes this far above the target whatever the model says
+VALVE_PROPORTIONAL_BAND_K = 1.0  # A modulating valve opens 100 % further per this many K below the target
+# AC sensor offset (device reading - room sensor while the compressor runs), see HeadOffsetTracker
+HEAD_OFFSET_SETTLE_S = 240  # Running time before readings count: the offset builds up with the airflow after a start
+HEAD_OFFSET_ALPHA = 0.05  # EMA weight per reading (one per 30 s cycle: ~10 min of running to follow a change)
+HEAD_OFFSET_MIN_SAMPLES = 10  # Readings before the offset is applied to setpoints
+HEAD_OFFSET_MAX_K = 4.0  # Larger differences are a misplaced or broken sensor, not a bias to correct
+HEAD_OFFSET_GRID_K = 0.5  # Applied offsets are multiples of this; below a quarter of a degree nothing changes
+HEAD_OFFSET_HYSTERESIS_K = 0.375  # The applied offset moves only once the learned one is this far from it
+# Comfort-weighted cost (°C² equivalent) of starting a run, for slow heating systems (UFH) only.
+# Fast systems get a start hysteresis in the controller; UFH keeps the optimizer's decisions
+# and toggled heat/idle every 30 s cycle at the target without it (#429).
+SLOW_SYSTEM_START_PENALTY = 1.0
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30
@@ -127,6 +154,7 @@ DEFAULT_MOLD_COOLDOWN_MINUTES = 60  # minutes between repeated notifications per
 MOLD_PREVENTION_DELTAS = {"light": 1.0, "medium": 2.0, "strong": 3.0}
 MOLD_HYSTERESIS = 5.0  # surface RH must drop this much below warning to clear
 MIN_MOLD_GROWTH_TEMP = 5.0  # °C — below this surface temp, mold risk negligible
+DEFAULT_MOLD_F_RSI = 0.80  # DIN 4108-2 temperature factor; realistic for standard existing buildings
 
 # Heating system profiles — residual heat modeling per system type
 # tau_minutes: exponential decay time constant of residual heat after heating stops
@@ -149,6 +177,12 @@ HEATING_SYSTEM_PROFILES: dict[str, dict[str, float]] = {
 }
 RESIDUAL_HEAT_CUTOFF = 0.02  # below this q_residual is treated as zero
 
+# AC rebound: while an AC cools, the air drops below the building mass; after it
+# stops the air relaxes back within minutes. Charge relaxes towards the cooling
+# power fraction while cooling and decays with this time constant otherwise.
+AC_REBOUND_TAU_MINUTES = 10.0
+AC_REBOUND_CUTOFF = 0.01  # below this the rebound charge is treated as zero
+
 # Blind/cover control
 COVER_SOLAR_MIN: float = 0.15
 COVER_HYSTERESIS: float = 1.0
@@ -160,12 +194,19 @@ COVER_USER_OVERRIDE_MINUTES: int = 60
 COVER_TRANSITION_SETTLE_S: int = 90  # seconds after commanding before override detection activates
 COVER_DEFAULT_BETA_S: float = 3.0  # °C/h per unit q_solar (default for rooms without learned data)
 COVER_LINEAR_LOOKAHEAD_H: float = 1.0  # linear fallback: 1h (no heat-loss correction → keep short)
+COVER_COOLING_LOOKAHEAD_H: float = 3.0  # rooms that cool: solar input the learned model counts (unit removes it all)
+COVER_COOLING_LINEAR_H: float = 2.0  # same with the default gain (~2x a learned one) while the model is not confident
+COVER_DIRECT_SUN_ANGLE_DEG: float = 60.0  # sun within this angle of the facade normal counts fully
 COVER_PREDICTION_DT_MINUTES: float = 5.0  # time step for RC trajectory simulation
 COVER_MAX_PREDICTION_STD: float = 0.5  # max idle+solar prediction_std to activate RC tier
 COVER_CONFIDENCE_REFERENCE_SOLAR: float = 0.5  # reference q_solar for confidence check
 COVER_MIN_IDLE_FOR_LEARNED: int = 30  # Min idle observations before trusting EKF's beta_s
 COVER_POS_DEADBAND: int = 20  # min position change (%) to trigger motor movement
+COVER_REOPEN_STEP: int = 40  # min partial reopening (%) within a shading episode
+COVER_REOPEN_HOLD_SECONDS: int = 3600  # min time since the last move before a partial reopening
 COVER_DAILY_LOOKAHEAD_H: float = 8.0  # hours ahead to search for daily solar peak (Tier 2)
+COVER_SMOOTHING_MINUTES: float = 30.0  # EMA time constant for room temp and shading excess (AC cycles)
+COVER_SMOOTHING_RISE_MINUTES: float = 10.0  # faster EMA while the shading excess climbs
 
 # Heat source orchestration — smart routing for rooms with multiple heating device types
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)

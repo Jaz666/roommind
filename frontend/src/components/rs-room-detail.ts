@@ -31,6 +31,7 @@ import "../components/shared/rs-info-icon";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
 import { resolveHeatingSystemType } from "../utils/device-utils";
+import { DEFAULT_OCCUPANCY_ECO_DELAY } from "../utils/constants";
 import type { RsOverrideSection } from "./rs-override-section";
 
 const CONTROL_DOCS_URL =
@@ -58,6 +59,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
   @state() private _selectedOccupancySensors: Set<string> = new Set();
+  @state() private _occupancyEcoEnabled = false;
+  @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @state() private _selectedWindowSensors: Set<string> = new Set();
   @state() private _windowOpenDelay = 0;
   @state() private _windowCloseDelay = 0;
@@ -267,6 +270,8 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = this.config.temperature_sensor;
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
       this._selectedOccupancySensors = new Set(this.config.occupancy_sensors ?? []);
+      this._occupancyEcoEnabled = this.config.occupancy_eco_enabled ?? false;
+      this._occupancyEcoDelay = this.config.occupancy_eco_delay ?? DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set(this.config.window_sensors ?? []);
       this._windowOpenDelay = this.config.window_open_delay ?? 0;
       this._windowCloseDelay = this.config.window_close_delay ?? 0;
@@ -310,6 +315,8 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = "";
       this._selectedHumiditySensor = "";
       this._selectedOccupancySensors = new Set();
+      this._occupancyEcoEnabled = false;
+      this._occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set();
       this._windowOpenDelay = 0;
       this._windowCloseDelay = 0;
@@ -623,6 +630,8 @@ export class RsRoomDetail extends LitElement {
                       .temperatureSensor=${this._selectedTempSensor}
                       .humiditySensor=${this._selectedHumiditySensor}
                       .occupancySensors=${this._selectedOccupancySensors}
+                      .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+                      .occupancyEcoDelay=${this._occupancyEcoDelay}
                       .windowSensors=${this._selectedWindowSensors}
                       .windowOpenDelay=${this._windowOpenDelay}
                       .windowCloseDelay=${this._windowCloseDelay}
@@ -891,6 +900,8 @@ export class RsRoomDetail extends LitElement {
             .temperatureSensor=${this._selectedTempSensor}
             .humiditySensor=${this._selectedHumiditySensor}
             .occupancySensors=${this._selectedOccupancySensors}
+            .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+            .occupancyEcoDelay=${this._occupancyEcoDelay}
             .windowSensors=${this._selectedWindowSensors}
             .windowOpenDelay=${this._windowOpenDelay}
             .windowCloseDelay=${this._windowCloseDelay}
@@ -1084,7 +1095,9 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  private _onSensorChanged(e: CustomEvent<{ key: string; value: string | string[] | number }>) {
+  private _onSensorChanged(
+    e: CustomEvent<{ key: string; value: string | string[] | number | boolean }>,
+  ) {
     const { key, value } = e.detail;
     if (key === "temperature_sensor") {
       this._selectedTempSensor = value as string;
@@ -1092,6 +1105,10 @@ export class RsRoomDetail extends LitElement {
       this._selectedHumiditySensor = value as string;
     } else if (key === "occupancy_sensors") {
       this._selectedOccupancySensors = new Set(value as string[]);
+    } else if (key === "occupancy_eco_enabled") {
+      this._occupancyEcoEnabled = value as boolean;
+    } else if (key === "occupancy_eco_delay") {
+      this._occupancyEcoDelay = value as number;
     } else if (key === "window_sensors") {
       this._selectedWindowSensors = new Set(value as string[]);
     } else if (key === "window_open_delay") {
@@ -1235,6 +1252,8 @@ export class RsRoomDetail extends LitElement {
         temperature_sensor: this._selectedTempSensor,
         humidity_sensor: this._selectedHumiditySensor,
         occupancy_sensors: [...this._selectedOccupancySensors],
+        occupancy_eco_enabled: this._occupancyEcoEnabled,
+        occupancy_eco_delay: this._occupancyEcoDelay,
         window_sensors: [...this._selectedWindowSensors],
         window_open_delay: this._windowOpenDelay,
         window_close_delay: this._windowCloseDelay,

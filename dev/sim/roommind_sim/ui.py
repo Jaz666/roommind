@@ -106,10 +106,17 @@ def screenshot(
 
 
 def _run_ui_action(page: Any, action: str) -> None:
-    """``click:<text>`` / ``wait:<ms>`` / ``scroll:<px>`` for simple flows before the shot."""
+    """``click:<text>`` / ``css:<selector>`` / ``wait:<ms>`` / ``scroll:<px>`` for simple flows before the shot.
+
+    ``css:`` clicks the first match of a selector (Playwright pierces shadow roots), for
+    icon buttons without text, e.g. ``css:rs-section-card:has-text("Sensoren") .edit-btn``.
+    """
     kind, _, arg = action.partition(":")
     if kind == "click":
         page.get_by_text(arg, exact=False).first.click()
+        page.wait_for_timeout(1200)
+    elif kind == "css":
+        page.locator(arg).first.click()
         page.wait_for_timeout(1200)
     elif kind == "wait":
         page.wait_for_timeout(float(arg))
@@ -117,4 +124,4 @@ def _run_ui_action(page: Any, action: str) -> None:
         page.mouse.wheel(0, float(arg))
         page.wait_for_timeout(600)
     else:
-        raise ValueError(f"unknown ui action {action!r} (click:, wait:, scroll:)")
+        raise ValueError(f"unknown ui action {action!r} (click:, css:, wait:, scroll:)")

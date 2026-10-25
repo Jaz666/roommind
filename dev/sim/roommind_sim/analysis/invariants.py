@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from .load import Interval, RunData
-from .metrics import ACTIVE_MODES
+from .metrics import ACTIVE_MODES, decided_mode
 
 EXEMPT_MARGIN_S = 90.0
+COORDINATOR_CYCLE_S = 35.0
 
 
 @dataclass
@@ -120,6 +121,91 @@ def min_run_commanded(run: RunData, tolerance_s: float = 45.0) -> list[Violation
     return out
 
 
+def _active_targets_before(run: RunData, area: str, t: float) -> dict[str, Any] | None:
+    """Room state at the last observer tick before ``t`` in which the room heated or cooled."""
+    for o in reversed(run.observer):
+        if o["t"] > t:
+            continue
+        room = o["rooms"].get(area) or {}
+        if decided_mode(room) in ("heating", "cooling"):
+            return room
+    return None
+
+
+# RoomMind's HOLD_OVERSHOOT_MARGIN: past target + this the hold throttles the unit to minimum.
+HOLD_THROTTLE_MARGIN_K = 0.5
+
+
+def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list[Violation]:
+    """While the min-run holds a unit on, RoomMind does not cut its setpoint back (#436).
+
+    A heating setpoint lowered (cooling setpoint raised) during the hold stops units
+    whose own sensor already reads the room as warm (cold) enough; in #436 the mode
+    stayed "heat" while the compressor stopped. Allowed: the room target itself moved
+    that way since the last active tick (eco override, vacation, schedule), the room
+    ran past the far side of its band (documented band-overshoot rule), or, in a room
+    without a far side (heat_only / cool_only or no target there), the room is
+    ``HOLD_THROTTLE_MARGIN_K`` past the target and the new setpoint stays on the demand
+    side of it (throttle to minimum instead of boosting on).
+    """
+    rooms_cfg = run.rooms_config()
+    area_of: dict[str, str | None] = {}
+    for group in _groups(run):
+        for m in group.get("members", []):
+            area_of[m] = _room_of(run, m)
+    out: list[Violation] = []
+    setpoint: dict[str, float] = {}
+    mode: dict[str, str] = {}
+    for c in run.commands:
+        eid = c["entity_id"]
+        if eid not in area_of or not str(c.get("result", "")).startswith("accepted"):
+            continue
+        data = c["data"]
+        if data.get("hvac_mode"):
+            mode[eid] = data["hvac_mode"]
+        if c["service"] != "set_temperature" or data.get("temperature") is None:
+            continue
+        new = float(data["temperature"])
+        prev = setpoint.get(eid)
+        setpoint[eid] = new
+        area = area_of[eid]
+        if prev is None or area is None:
+            continue
+        # The observer polls after the coordinator tick that sent the command.
+        obs = run.observer_at(c["t"] + 35) or {}
+        room = obs.get("rooms", {}).get(area) or {}
+        if not room.get("compressor_protection_active") or decided_mode(room) != "idle":
+            continue
+        heating = mode.get(eid) == "heat"
+        cooling = mode.get(eid) == "cool"
+        if not ((heating and new < prev - tolerance_k) or (cooling and new > prev + tolerance_k)):
+            continue
+        key = "heat_target" if heating else "cool_target"
+        ref = _active_targets_before(run, area, c["t"]) or {}
+        now_t, ref_t = room.get(key), ref.get(key)
+        if now_t is not None and ref_t is not None:
+            if (heating and now_t < ref_t - tolerance_k) or (cooling and now_t > ref_t + tolerance_k):
+                continue
+        climate_mode = (rooms_cfg.get(area) or {}).get("climate_mode", "auto")
+        cur = room.get("current_temp")
+        far = room.get("cool_target") if heating else room.get("heat_target")
+        one_sided = far is None or climate_mode == ("heat_only" if heating else "cool_only")
+        if cur is not None and now_t is not None and one_sided:
+            if heating and cur >= now_t + HOLD_THROTTLE_MARGIN_K - 1e-6 and new >= now_t - tolerance_k:
+                continue
+            if cooling and cur <= now_t - HOLD_THROTTLE_MARGIN_K + 1e-6 and new <= now_t + tolerance_k:
+                continue
+        if cur is not None:
+            if heating and climate_mode != "heat_only" and room.get("cool_target") is not None:
+                if cur >= room["cool_target"]:
+                    continue
+            if cooling and climate_mode != "cool_only" and room.get("heat_target") is not None:
+                if cur <= room["heat_target"]:
+                    continue
+        out.append(Violation(c["t"], f"{eid}: setpoint {prev} -> {new} during the min-run hold ({area} idle)"))
+    return out
+
+
 def min_off_respected(run: RunData, tolerance_s: float = 45.0) -> list[Violation]:
     out: list[Violation] = []
     for group in _groups(run):
@@ -173,7 +259,7 @@ def no_cooling_below_outdoor_min(run: RunData, tolerance_k: float = 0.3) -> list
             continue
         t_out = s["outdoor"]["temp"]
         for area, room in o["rooms"].items():
-            if room.get("mode") == "cooling" and t_out < limit and not room.get("override_active"):
+            if decided_mode(room) == "cooling" and t_out < limit and not room.get("override_active"):
                 out.append(Violation(o["t"], f"{area} cooling at outdoor {t_out:.1f} < {limit}"))
                 break
     return out[:20]
@@ -195,6 +281,35 @@ def setpoints_within_device_range(run: RunData) -> list[Violation]:
     return out
 
 
+def no_full_cooling_at_target(run: RunData, tolerance_k: float = 0.0, after_s: float = 35.0) -> list[Violation]:
+    """No AC gets its lowest setpoint while the room is at or below its cool target (#450).
+
+    Only MPC rooms. With efficiency weights the plan's no-demand fallback did this inside
+    a cooling min run. Not a default: with comfort weights a closed-form fraction that
+    saturates on a badly learned model sends it too. The room state is read from the
+    observer record right after the command (same cycle).
+    """
+    floors = {
+        d.entity_id: (d.room, float(d.capabilities["min_temp"]))
+        for d in run.scenario.all_devices()
+        if "min_temp" in d.capabilities
+    }
+    out: list[Violation] = []
+    for c in run.commands:
+        dev = floors.get(c["entity_id"])
+        sp = c["data"].get("temperature")
+        if dev is None or sp is None or c["service"] != "set_temperature" or c["data"].get("hvac_mode") != "cool":
+            continue
+        area, floor = dev
+        room = ((run.observer_at(c["t"] + after_s) or {}).get("rooms") or {}).get(area) or {}
+        temp, cool = room.get("current_temp"), room.get("cool_target")
+        if not room.get("mpc_active") or temp is None or cool is None:
+            continue
+        if float(sp) <= floor + 0.05 and temp <= cool + tolerance_k:
+            out.append(Violation(c["t"], f"{c['entity_id']} set to {sp} with {area} at {temp} (cool target {cool})"))
+    return out
+
+
 def no_rejected_commands(run: RunData) -> list[Violation]:
     return [
         Violation(c["t"], f"{c['entity_id']} {c['service']} {c['data']} -> {c['result']}")
@@ -204,9 +319,14 @@ def no_rejected_commands(run: RunData) -> list[Violation]:
 
 
 def window_open_pauses(run: RunData, grace_s: float = 120.0) -> list[Violation]:
-    """While a window is open (past its delay) the room is idle (#437)."""
+    """While a window is open (past its delay) the room is idle (#437).
+
+    Intervals end at the first sample that shows the window closed, so the real close
+    lies up to one sample interval earlier; RoomMind may already resume there.
+    """
     out: list[Violation] = []
     rooms_cfg = run.rooms_config()
+    sample_s = float(run.scenario.sample_interval)
     for area, intervals in run.window_open_intervals().items():
         cfg = rooms_cfg.get(area) or {}
         if not cfg.get("window_sensors"):
@@ -214,7 +334,7 @@ def window_open_pauses(run: RunData, grace_s: float = 120.0) -> list[Violation]:
         delay = float(cfg.get("window_open_delay", 0)) + grace_s
         for iv in intervals:
             for o in run.observer:
-                if iv.start + delay <= o["t"] <= iv.end:
+                if iv.start + delay <= o["t"] <= iv.end - sample_s:
                     room = o["rooms"].get(area) or {}
                     if room.get("mode") not in ("idle", None):
                         out.append(
@@ -240,16 +360,27 @@ def no_heat_and_cool_same_group(run: RunData) -> list[Violation]:
 
 
 def no_commands_when_climate_off(run: RunData) -> list[Violation]:
-    """With climate control off RoomMind sends no device commands (#36, #74, #365)."""
+    """With climate control off RoomMind sends no device commands (#36, #74, #365).
+
+    Handing a pinned valve back (degree to 100, #413) is the exception: the TRV could
+    not regulate on its own otherwise.
+    """
     settings = run.settings()
     rooms = run.rooms_config()
     off_rooms = {a for a, r in rooms.items() if r.get("climate_control_enabled") is False}
     if settings.get("climate_control_active") is False:
         off_rooms = set(rooms)
     devices = {d.entity_id for d in run.scenario.all_devices() if d.room in off_rooms}
+    devices |= {n for d in run.scenario.all_devices() if d.room in off_rooms for n in d.valve_numbers().values()}
     return [
-        Violation(c["t"], f"{c['entity_id']} got {c['service']}") for c in run.commands if c["entity_id"] in devices
+        Violation(c["t"], f"{c['entity_id']} got {c['service']}")
+        for c in run.commands
+        if c["entity_id"] in devices and not _valve_release(c)
     ]
+
+
+def _valve_release(command: dict) -> bool:
+    return bool(command["entity_id"].startswith("number.") and (command.get("data") or {}).get("value") == 100)
 
 
 def max_commands_per_hour(run: RunData, limit: float = 12.0, entity_id: str | None = None) -> list[Violation]:
@@ -271,15 +402,53 @@ def max_commands_per_hour(run: RunData, limit: float = 12.0, entity_id: str | No
     return out
 
 
+def hold_shows_running_unit(run: RunData) -> list[Violation]:
+    """During a min-run hold the room shows what the held unit does, plus the time left (#452).
+
+    Only ticks where the room's group members report the same running action in the
+    sample at the observer tick and the one before it count (state lag around a stop).
+    The observer reads the live state of the last coordinator cycle, so ``until`` may
+    lie up to one cycle before the tick.
+    """
+    shown = {"heating": "heating", "preheating": "heating", "cooling": "cooling"}
+    members_of: dict[str, list[str]] = {}
+    for group in _groups(run):
+        for m in group.get("members", []):
+            area = _room_of(run, m)
+            if area is not None:
+                members_of.setdefault(area, []).append(m)
+    out: list[Violation] = []
+    for o in run.observer:
+        for area, room in o["rooms"].items():
+            if room.get("compressor_protection_reason") != "min_run" or decided_mode(room) != "idle":
+                continue
+            until = room.get("compressor_protection_until")
+            if until is None or until <= o["t"] - COORDINATOR_CYCLE_S:
+                out.append(Violation(o["t"], f"{area}: min-run hold without time left ({until})"))
+                continue
+            actions = set()
+            for s in (run.sample_at(o["t"]), run.sample_at(o["t"] - COORDINATOR_CYCLE_S)):
+                for m in members_of.get(area, []):
+                    dev = (s or {}).get("devices", {}).get(m) or {}
+                    if dev.get("mode") not in (None, "off"):
+                        actions.add(shown.get(dev.get("action"), "idle"))
+            if len(actions) == 1 and (expected := actions.pop()) != room.get("mode"):
+                out.append(Violation(o["t"], f"{area}: held unit {expected}, room shows {room.get('mode')}"))
+    return out[:20]
+
+
 INVARIANTS: dict[str, Callable[..., list[Violation]]] = {
     f.__name__: f
     for f in (
         min_run_respected,
         min_run_commanded,
+        min_run_hold_keeps_setpoint,
+        hold_shows_running_unit,
         min_off_respected,
         target_never_empty,
         no_cooling_below_outdoor_min,
         setpoints_within_device_range,
+        no_full_cooling_at_target,
         no_rejected_commands,
         window_open_pauses,
         no_heat_and_cool_same_group,

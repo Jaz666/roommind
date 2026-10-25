@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import pytest
 from helpers import run, world
 
 from roommind_sim.physics.psychro import abs_humidity, rel_humidity
@@ -23,15 +24,26 @@ def test_unheated_room_relaxes_towards_outdoor():
 
 def test_radiator_responds_in_minutes():
     w = world(
-        {"r": {"initial": {"temperature": 18.0}, "devices": [{"entity_id": "climate.r_trv", "profile": "generic_trv"}]}}
+        {
+            "r": {
+                "initial": {"temperature": 18.0},
+                "devices": [{"entity_id": "climate.r_trv", "profile": "generic_trv"}],
+            }
+        },
+        # design day: the heating curve supplies its full 55 °C
+        weather={"profile": "temperate", "fixed": {"temperature": -12.0, "cloud": 100.0, "humidity": 80.0}},
     )
     dev = w.devices["climate.r_trv"]
     assert dev.call("set_temperature", {"temperature": 22, "hvac_mode": "heat"}, w.now).ok
+    zp = w.zones["r"].params
+    rated_w = 1.3 * (zp.h_air_out + zp.h_mass_out) * 32  # sized to the heat load at -12 °C, 55 °C supply
     run(w, 600)
     assert dev.valve > 0.9 and dev.active
-    assert 600 < dev.heat_output_w() < 1500  # radiator warmed up within 10 min
+    assert 0.4 * rated_w < dev.heat_output_w() < rated_w  # water and steel still warming up after 10 min
+    run(w, 1200)
+    assert dev.heat_output_w() > 0.7 * rated_w
     run(w, 2 * 3600)
-    assert w.zones["r"].t_air > 19.0
+    assert w.zones["r"].t_air > 18.5  # 1.3x the design load: only 30 % of it is left to warm the mass
 
 
 def test_trv_head_bias_closes_valve_before_room_reaches_setpoint():
@@ -110,3 +122,56 @@ def test_shower_raises_humidity_and_airing_lowers_it():
 def test_psychro_roundtrip():
     x = abs_humidity(21.0, 55.0)
     assert math.isclose(rel_humidity(21.0, x), 55.0, rel_tol=1e-6)
+
+
+def test_sensor_housing_lags_the_air():
+    from roommind_sim.scenario.model import SensorSpec
+    from roommind_sim.sensors import SimSensor
+
+    spec = SensorSpec(
+        entity_id="sensor.t",
+        kind="temperature",
+        room="r",
+        name="t",
+        params={"resolution": 0.01, "time_constant_s": 600, "report": {"min_delta": 0.0}},
+    )
+    s = SimSensor(spec, seed=1)
+    s.update(20.0, 0.0, -1e9)
+    for t in range(10, 610, 10):
+        s.update(21.0, float(t), -1e9)
+    assert s.value == pytest.approx(20.63, abs=0.02)  # ~63 % of the step after one time constant
+
+
+def test_coarse_zigbee_sensor_reports_in_two_tenth_steps():
+    from roommind_sim.scenario.loader import load_profile
+    from roommind_sim.scenario.model import SensorSpec
+    from roommind_sim.sensors import SimSensor
+
+    params = {**load_profile("sensors", "sonoff_snzb02d", "test"), "noise": 0.0}
+    s = SimSensor(SensorSpec(entity_id="sensor.t", kind="temperature", room="r", name="t", params=params), seed=1)
+    reported = []
+    for i in range(120):
+        if s.update(22.0 + i * 0.005, float(i * 30), -1e9):
+            reported.append(s.value)
+    assert reported == [22.0, 22.2, 22.4, 22.6]
+
+
+def _weather(**spec):  # noqa: ANN003
+    from roommind_sim.weather import WeatherModel
+
+    return WeatherModel({"profile": "temperate", **spec}, 52.5, 13.4, "Europe/Berlin", seed=1)
+
+
+def test_forecast_error_grows_with_lead_time_and_leaves_the_weather_alone():
+    now = 1_768_176_000.0  # 2026-01-12
+    real, perfect = _weather(), _weather(forecast_error=False)
+    assert real.at(now + 7200).temp_c == perfect.at(now + 7200).temp_c
+    fc = real.forecast(now, hours=48)
+    exact = perfect.forecast(now, hours=48)
+    temp_err = [a["temperature"] - b["temperature"] for a, b in zip(fc, exact, strict=True)]
+    cloud_err = [a["cloud_coverage"] - b["cloud_coverage"] for a, b in zip(fc, exact, strict=True)]
+    assert abs(temp_err[0]) < 0.6  # next hour: almost a nowcast
+    rms_day2 = math.sqrt(sum(e * e for e in temp_err[24:]) / 24)
+    assert 0.5 < rms_day2 < 3.0
+    assert max(abs(e) for e in cloud_err) > 5
+    assert all(0 <= a["cloud_coverage"] <= 100 for a in fc)

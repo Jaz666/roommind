@@ -14,6 +14,7 @@ from custom_components.roommind.const import (
     COVER_POS_DEADBAND,
     COVER_POS_SCALE,
     COVER_PREDICTION_DT_MINUTES,
+    COVER_REOPEN_HOLD_SECONDS,
     COVER_SOLAR_MIN,
     COVER_TRANSITION_SETTLE_S,
     COVER_USER_CONFLICT_THRESHOLD,
@@ -1596,20 +1597,22 @@ def test_episode_ending_at_baseline_without_command_relinquishes_ownership(mock_
     assert state.baseline_position == 50
 
     # weakening sun: modulation opens back to the baseline via the deploy path
-    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    # (a reopening, so it waits for the reopen hold)
+    t = 1000.0 + COVER_REOPEN_HOLD_SECONDS + 1
+    mock_t.time.return_value = t
     d = mgr.evaluate("lr", predicted_peak_temp=23.0, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is True
     assert d.target_position == 50
 
     # episode ends at the baseline without a command: ownership must be handed back
-    mock_t.time.return_value = 1000.0 + 2 * (COVER_MIN_HOLD_SECONDS + 1)
+    mock_t.time.return_value = t + COVER_MIN_HOLD_SECONDS + 1
     d = mgr.evaluate("lr", predicted_peak_temp=21.2, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is False
     assert state.baseline_position is None
     assert state.owned is False
 
     # next retract must HOLD at the user position, not auto-open to 100
-    mock_t.time.return_value = 1000.0 + 3 * (COVER_MIN_HOLD_SECONDS + 1)
+    mock_t.time.return_value = t + 2 * (COVER_MIN_HOLD_SECONDS + 1)
     d = mgr.evaluate("lr", predicted_peak_temp=20.0, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is False
     assert d.reason == "user_position_hold"
@@ -1655,7 +1658,12 @@ def test_restart_state_never_retracts_unknown_position():
 
 
 @patch("custom_components.roommind.managers.cover_manager.time")
-def test_retract_within_deadband_ends_episode_without_command(mock_t):
+def test_retract_restores_owned_position_inside_deadband(mock_t):
+    """An owned intermediate position near the baseline is still restored.
+
+    The deadband spares the motor for small modulation steps, but ending the
+    episode at RoomMind's own 90 % would hand that position to the user.
+    """
     mgr = CoverManager()
     mock_t.time.return_value = 1000.0
     state = mgr._get_state("lr")
@@ -1665,9 +1673,108 @@ def test_retract_within_deadband_ends_episode_without_command(mock_t):
     state.baseline_position = 100
     kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
     d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True
+    assert d.target_position == 100
+    assert d.reason == "low_solar_retract"
+    assert state.baseline_position is None
+    assert state.owned is False
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_without_baseline_restores_owned_position_inside_deadband(mock_t):
+    """Owned 85 % (e.g. after a forced position) opens fully once solar is low."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    state = mgr._get_state("lr")
+    state.current_position = 85
+    state.last_commanded_position = 85
+    state.owned = True
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True
+    assert d.target_position == 100
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_restore_is_sent_once_when_cover_settles_short(mock_t):
+    """Commanded 100, cover reports 97: no resend every hold period."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    state = mgr._get_state("lr")
+    state.current_position = 80
+    state.last_commanded_position = 80
+    state.owned = True
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True and d.target_position == 100
+
+    for i in range(1, 5):
+        mock_t.time.return_value = 1000.0 + i * (COVER_MIN_HOLD_SECONDS + 1)
+        mgr.update_position("lr", 97)
+        d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+        assert d.changed is False
+        assert d.reason == "low_solar"
+    assert mgr.is_user_override_active("lr") is False
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_inside_deadband_leaves_unowned_position_alone(mock_t):
+    """#325: a user position near the retract target still gets no command."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    mgr.update_position("lr", 90)
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
     assert d.changed is False
     assert d.reason == "low_solar"
-    assert state.baseline_position is None
+    assert d.target_position == 90
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_evening_modulation_never_strands_cover_as_user_position(mock_t):
+    """Sim covers-solar-south: two shading days, no user interaction.
+
+    Day 1 modulation ends at 92 (8 below the baseline 100), day 2 at 74
+    (18 below). Both are RoomMind's own positions and must be retracted;
+    before the fix the cover stayed at 74 overnight with user_position_hold.
+    Partial reopening needs a large step and an hour since the last move.
+    """
+    mgr = CoverManager()
+    t = [1000.0]
+
+    def step(peak: float, gap: float = COVER_MIN_HOLD_SECONDS + 1, **extra) -> object:
+        t[0] += gap
+        mock_t.time.return_value = t[0]
+        d = mgr.evaluate("lr", predicted_peak_temp=peak, target_temp=21.0, **{**_BASE_KWARGS, **extra})
+        if d.changed:
+            mgr.update_position("lr", d.target_position)
+        return d
+
+    mock_t.time.return_value = t[0]
+    mgr.update_position("lr", 100)
+
+    # day 1 evening: 75 → 33 → 92, then the retract
+    assert step(23.0).target_position == 75
+    assert step(23.85).target_position == 33
+    assert step(22.67, gap=COVER_REOPEN_HOLD_SECONDS + 1).target_position == 92
+    d = step(20.0)
+    assert d.changed is True and d.target_position == 100
+    d = step(20.0, q_solar=0.05)
+    assert d.changed is False and d.target_position == 100
+
+    # day 2: full shade, evening 23 → 74, then the retract
+    assert step(25.0).target_position == 0
+    assert mgr._get_state("lr").baseline_position == 100
+    d = step(24.05, gap=COVER_REOPEN_HOLD_SECONDS + 1)
+    assert d.changed is False and d.reason == "reopen_hold"  # 0 -> 23 is a small step
+    assert step(23.03).target_position == 74
+    d = step(20.0)
+    assert d.changed is True and d.target_position == 100
+    d = step(20.0, q_solar=0.05)
+    assert d.changed is False
+    assert d.reason != "user_position_hold"
+    assert mgr.get_current_position("lr") == 100
+    assert mgr.is_user_override_active("lr") is False
 
 
 @patch("custom_components.roommind.managers.cover_manager.time")
@@ -1714,3 +1821,129 @@ def test_clear_user_override_resumes_without_rearm(mock_t):
     mock_t.time.return_value = 1090.0
     mgr.update_position("lr", 60)
     assert mgr.is_user_override_active("lr") is True
+
+
+# ── Partial reopening inside a shading episode ─────────────────────────
+
+
+def _deployed_to(mgr: CoverManager, mock_t: MagicMock, t: float, position_peak: float) -> int:
+    mock_t.time.return_value = t
+    mgr.update_position("lr", 100)
+    d = mgr.evaluate("lr", predicted_peak_temp=position_peak, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    mgr.update_position("lr", d.target_position)
+    return d.target_position
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_partial_reopen_below_step_holds(mock_t):
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 25.0) == 0
+    mock_t.time.return_value = 1000.0 + COVER_REOPEN_HOLD_SECONDS + 1
+    # excess 3.1 -> desired 20, a 20 % reopening
+    d = mgr.evaluate("lr", predicted_peak_temp=24.1, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "reopen_hold"
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_partial_reopen_waits_for_reopen_hold(mock_t):
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 25.0) == 0
+    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    # excess 2.3 -> desired 60: big enough, but the last move is only 15 min old
+    d = mgr.evaluate("lr", predicted_peak_temp=23.3, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "reopen_hold"
+    mock_t.time.return_value = 1000.0 + COVER_REOPEN_HOLD_SECONDS + 1
+    d = mgr.evaluate("lr", predicted_peak_temp=23.3, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 60
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_deepening_is_not_held_by_reopen_rule(mock_t):
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 23.3) == 60
+    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 0
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_full_retract_is_not_held_by_reopen_rule(mock_t):
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 25.0) == 0
+    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 100
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_partial_open_after_forced_position_skips_reopen_rule(mock_t):
+    """Night close ends: normal control takes over at once, as before."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    kwargs = {**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True and d.target_position == 0
+    mgr.update_position("lr", 0)
+    mock_t.time.return_value = 1060.0
+    d = mgr.evaluate("lr", predicted_peak_temp=23.3, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 60
+
+
+# ── Shading by need (rooms that cool) ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("peak", "expected"),
+    [
+        # threshold 1.5, effectiveness 0.85: closed = (1 - 1.5 / excess) / 0.85
+        (23.5, 53),  # excess 2.5
+        (24.0, 42),  # excess 3.0 (the linear mapping closed 75 %)
+        (30.0, 2),  # excess 9.0
+    ],
+)
+def test_shade_by_need_closes_as_far_as_needed(peak, expected):
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=peak, target_temp=21.0, shade_by_need=True, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == expected
+
+
+def test_shade_by_need_small_excess_stays_in_deadband():
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=22.6, target_temp=21.0, shade_by_need=True, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "deadband"
+
+
+def test_shade_by_need_respects_min_position_and_snap():
+    mgr = CoverManager()
+    kwargs = {**_BASE_KWARGS, "covers_min_position": 50}
+    d = mgr.evaluate("lr", predicted_peak_temp=30.0, target_temp=21.0, shade_by_need=True, **kwargs)
+    assert d.target_position == 50
+    mgr = CoverManager()
+    d = mgr.evaluate(
+        "lr", predicted_peak_temp=23.5, target_temp=21.0, shade_by_need=True, covers_snap_deploy=True, **_BASE_KWARGS
+    )
+    assert d.target_position == 0
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_excess_just_above_threshold_holds_instead_of_retracting(mock_t):
+    """Mapped to fully open, but still inside the deploy band: a reopening, not the retract."""
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 24.0) == 25
+    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    d = mgr.evaluate("lr", predicted_peak_temp=22.51, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "reopen_hold"
+    # below the hysteresis band the retract goes ahead after the normal hold
+    d = mgr.evaluate("lr", predicted_peak_temp=21.2, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 100

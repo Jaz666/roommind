@@ -9,11 +9,19 @@ import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
 import { tempUnit, toDisplayDelta } from "../../utils/temperature";
 
+// DIN 4108-2 temperature factor f_Rsi of the coldest spot (corner, window reveal) per insulation level.
+const INSULATION_LEVELS = [
+  { f_rsi: 0.65, key: "mold.insulation_poor" },
+  { f_rsi: 0.8, key: "mold.insulation_standard" },
+  { f_rsi: 0.9, key: "mold.insulation_good" },
+] as const;
+
 @customElement("rs-settings-mold")
 export class RsSettingsMold extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public moldDetectionEnabled = false;
   @property({ type: Number }) public moldHumidityThreshold = 70;
+  @property({ type: Number }) public moldFRsi = 0.8;
   @property({ type: Number }) public moldSustainedMinutes = 30;
   @property({ type: Boolean }) public moldPreventionEnabled = false;
   @property({ type: String }) public moldPreventionIntensity: "light" | "medium" | "strong" =
@@ -167,7 +175,48 @@ export class RsSettingsMold extends RsSettingsBase {
             : nothing
         }
       </div>
+
+      ${
+        this.moldDetectionEnabled || this.moldPreventionEnabled
+          ? html`
+              <div class="settings-section">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <ha-select
+                    style="width: 100%;"
+                    .value=${this._insulationValue()}
+                    .label=${localize("mold.insulation", l)}
+                    .options=${INSULATION_LEVELS.map((lvl) => ({
+                      value: String(lvl.f_rsi),
+                      label: localize(lvl.key, l),
+                    }))}
+                    fixedMenuPosition
+                    @selected=${(e: Event) => {
+                      const v = parseFloat(getSelectValue(e));
+                      if (!isNaN(v) && v !== this.moldFRsi) this._fire("moldFRsi", v);
+                    }}
+                    @closed=${(e: Event) => e.stopPropagation()}
+                  >
+                    ${INSULATION_LEVELS.map(
+                      (lvl) =>
+                        html`<ha-list-item value=${String(lvl.f_rsi)}
+                          >${localize(lvl.key, l)}</ha-list-item
+                        >`,
+                    )}
+                  </ha-select>
+                  <span class="field-hint">${localize("mold.insulation_hint", l)}</span>
+                </div>
+              </div>
+            `
+          : nothing
+      }
     `;
+  }
+
+  private _insulationValue(): string {
+    const nearest = INSULATION_LEVELS.reduce((best, lvl) =>
+      Math.abs(lvl.f_rsi - this.moldFRsi) < Math.abs(best.f_rsi - this.moldFRsi) ? lvl : best,
+    );
+    return String(nearest.f_rsi);
   }
 
   static styles = [RsSettingsBase.settingsBaseStyles];

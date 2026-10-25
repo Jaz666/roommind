@@ -240,7 +240,7 @@ async def test_mould_prevention_does_not_inflate_morning_preparation_target(hass
     coordinator, store = setup(hass, mock_config_entry)
     enable(store, boost=True)
     store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
-    coordinator._evaluate_mold_risk = AsyncMock(return_value=("warning", 75, True, 3.0))
+    coordinator._evaluate_mold_risk = AsyncMock(return_value=("warning", 75, 15.0, True, 3.0))
     live = await tariff_update(coordinator, 4, 45)
     assert live["living"]["heat_target"] == 21
     assert live["living"]["ac_boost_target"] == 21

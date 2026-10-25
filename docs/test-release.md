@@ -1,11 +1,9 @@
-# Household beta installation and rollback — 1.7.9b6
+# Household beta installation and rollback — 1.8.0b1
 
-This experimental prerelease corrects morning preparation overshoot: it removes
-the extra AC boost offset, stops heating below the scheduled morning target and
-preserves a cooling gap through handover. Existing tariff/boost selections remain
-enabled after upgrading. Review the new 0.2°C stopping margin in Settings.
-Follow [the tariff guide](heating-tariff.md), and use
-[reusable schedules](reusable-schedules.md) to define morning room targets.
+This prerelease merges upstream RoomMind 1.8.0 while retaining our household
+controls. Read [the upstream update guide](upstream-1.8-update.md) for new features,
+changed Heat only semantics, first checks and downgrade considerations.
+Existing schedules, tariff settings and shared Toshiba configuration are retained.
 
 Before installing, make a Home Assistant backup and download it. Also preserve
 an exact copy of `/config/custom_components/roommind` outside `custom_components`
@@ -14,7 +12,7 @@ Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
 
 ## Install
 
-Use HACS tracking **Jaz666/roommind**, select prerelease **1.7.9b6**, install it,
+Use HACS tracking **Jaz666/roommind**, select prerelease **1.8.0b1**, install it,
 and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
 update can overwrite the fork. Do not delete the configured RoomMind integration;
 the domain is still `roommind`, preserving rooms and settings.

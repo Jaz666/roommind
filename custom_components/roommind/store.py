@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
+    DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES,
     DOMAIN,
 )
 from .utils.device_utils import (
@@ -33,16 +34,30 @@ STORAGE_KEY = DOMAIN
 
 
 def _migrate_room_temps(room: dict) -> dict:
-    """Migrate legacy single comfort/eco temps to split heat/cool fields."""
+    """Migrate legacy single comfort/eco temps to split heat/cool fields.
+
+    In a cool_only room the single value is the cooling target.
+    """
+    cool_only = room.get("climate_mode") == "cool_only"
     if "comfort_heat" not in room:
         room["comfort_heat"] = room.get("comfort_temp", DEFAULT_COMFORT_HEAT)
     if "comfort_cool" not in room:
-        room["comfort_cool"] = DEFAULT_COMFORT_COOL
+        room["comfort_cool"] = room.get("comfort_temp", DEFAULT_COMFORT_COOL) if cool_only else DEFAULT_COMFORT_COOL
     if "eco_heat" not in room:
         room["eco_heat"] = room.get("eco_temp", DEFAULT_ECO_HEAT)
     if "eco_cool" not in room:
-        room["eco_cool"] = DEFAULT_ECO_COOL
+        room["eco_cool"] = room.get("eco_temp", DEFAULT_ECO_COOL) if cool_only else DEFAULT_ECO_COOL
     return room
+
+
+def _single_temps_to_cool_side(target: dict, config: dict, climate_mode: str) -> None:
+    """A legacy/API caller that sends only comfort_temp/eco_temp to a cool_only room means the cooling target."""
+    if climate_mode != "cool_only":
+        return
+    if "comfort_temp" in config and "comfort_cool" not in config:
+        target["comfort_cool"] = config["comfort_temp"]
+    if "eco_temp" in config and "eco_cool" not in config:
+        target["eco_cool"] = config["eco_temp"]
 
 
 def _migrate_override_fields(room: dict) -> dict:
@@ -272,6 +287,7 @@ class RoomMindStore:
             existing["comfort_heat"] = config["comfort_temp"]
         if "eco_temp" in config and "eco_heat" not in config:
             existing["eco_heat"] = config["eco_temp"]
+        _single_temps_to_cool_side(existing, config, existing.get("climate_mode", "auto"))
         # Directional device sync
         self._sync_devices(existing, config)
         return existing
@@ -287,6 +303,8 @@ class RoomMindStore:
             "temperature_sensor": config.get("temperature_sensor", ""),
             "humidity_sensor": config.get("humidity_sensor", ""),
             "occupancy_sensors": config.get("occupancy_sensors", []),
+            "occupancy_eco_enabled": config.get("occupancy_eco_enabled", False),
+            "occupancy_eco_delay": config.get("occupancy_eco_delay", DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES),
             "climate_mode": config.get("climate_mode", "auto"),
             "cooling_interlock_entities": config.get("cooling_interlock_entities", []),
             "cooling_interlock_delay": config.get("cooling_interlock_delay", 300),
@@ -332,6 +350,7 @@ class RoomMindStore:
             "heat_source_ac_min_outdoor": config.get("heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR),
             "climate_control_enabled": config.get("climate_control_enabled", True),
         }
+        _single_temps_to_cool_side(room, config, room["climate_mode"])
         # Directional device sync for new rooms (truthiness check, not just presence)
         if "devices" in config and config["devices"]:
             t, a = devices_to_legacy(room["devices"])

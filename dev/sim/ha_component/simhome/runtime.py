@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import time
@@ -15,6 +16,7 @@ from homeassistant.auth.const import GROUP_ID_ADMIN
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_time_interval
@@ -30,6 +32,8 @@ from .const import FLUSH_INTERVAL_S, OBSERVE_INTERVAL_S, PERSIST_INTERVAL_S
 
 _LOGGER = logging.getLogger(__name__)
 SIM_USER_NAME = "Sim"
+# Float residue of the virtual clock when two timers share an instant; not a real step.
+_MIN_STEP_S = 1e-6
 
 
 class SimRuntime:
@@ -51,6 +55,11 @@ class SimRuntime:
         # Persist/flush jobs run in the executor; serialize them so files are not
         # written concurrently and timeline lines stay in order.
         self._io_lock = asyncio.Lock()
+        # Timeline lines go through a writer thread of our own: HA cancels its tracked
+        # executor jobs on shutdown, and a cancelled flush lost (or, retried, doubled) the
+        # last minutes of the timeline on loaded hosts.
+        self._writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="simhome_writer")
+        self._writer_closed = False
         self.removed: set[str] = set(state.get("removed", []))
 
     # --- loading ------------------------------------------------------------------------
@@ -99,6 +108,8 @@ class SimRuntime:
         for room in self.scn.rooms.values():
             for d in room.devices:
                 rooms_by_entity[d.entity_id] = room.area_id
+                for number in d.valve_numbers().values():
+                    rooms_by_entity[number] = room.area_id
             for s in room.sensors:
                 rooms_by_entity[s.entity_id] = room.area_id
             for w in room.windows:
@@ -106,8 +117,15 @@ class SimRuntime:
                     rooms_by_entity[w.sensor] = room.area_id
             for c in room.covers:
                 rooms_by_entity[c.entity_id] = room.area_id
+        devices = dr.async_get(self.hass)
         for eid, area in rooms_by_entity.items():
-            if reg.async_get(eid) is not None:
+            entry = reg.async_get(eid)
+            if entry is None:
+                continue
+            if entry.device_id:
+                # A TRV with valve numbers shares one device (as in Zigbee2MQTT); HA takes the area from it
+                devices.async_update_device(entry.device_id, area_id=area)
+            else:
                 reg.async_update_entity(eid, area_id=area)
 
     # --- timers -------------------------------------------------------------------------
@@ -160,9 +178,19 @@ class SimRuntime:
 
     @callback
     def _tick(self, _now: Any) -> None:
+        self.advance()
+
+    @callback
+    def advance(self) -> None:
+        """Step the world up to now (no-op if already there).
+
+        asyncio orders timers due at the same instant by heap shape, not by scheduling
+        order, so samples and timeline actions step first instead of seeing the
+        previous physics step on some runs and the current one on others.
+        """
         now = time.time()
         dt = now - self._last_step
-        if dt <= 0:
+        if dt <= _MIN_STEP_S:
             return
         self._last_step = now
         changed = self.world.step(dt, now)
@@ -179,6 +207,7 @@ class SimRuntime:
 
     @callback
     def _sample(self, _now: Any) -> None:
+        self.advance()
         rec = self.world.sample()
         rec["t"] = round(time.time(), 1)
         self._buffers["samples"].append(json.dumps(rec, separators=(",", ":")))
@@ -217,10 +246,13 @@ class SimRuntime:
 
     async def async_flush(self) -> None:
         async with self._io_lock:
+            if self._writer_closed:
+                return  # a flush queued before the stop; the stop's own flush already wrote its lines
             buffers = {k: v for k, v in self._buffers.items() if v}
             self._buffers = {k: [] for k in self._buffers}
             if buffers:
-                await self.hass.async_add_executor_job(_append_lines, self.dir / "timeline", buffers)
+                write = self.hass.loop.run_in_executor(self._writer, _append_lines, self.dir / "timeline", buffers)
+                await asyncio.shield(write)
 
     async def async_persist(self) -> None:
         world = self.world.snapshot()
@@ -236,13 +268,18 @@ class SimRuntime:
             # Shutdown waits on real timeouts; in turbo they would jump hours ahead. Run
             # the shutdown in real time and let boot restore the plan (mode/target) after.
             plan = clk.state()
+            self.event("ha", {"what": "stopping"})
             await self.hass.async_add_executor_job(_write_state, self.dir / "state", None, None, None, plan)
             clk.set_mode(clockmod.SCALED, 1.0)
+        else:
+            self.event("ha", {"what": "stopping"})
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
-        self.event("ha", {"what": "stopping"})
         await self.async_persist()
+        # all writes are done; an idle writer thread would hold HA's shutdown for its 10 s join timeout
+        self._writer_closed = True
+        self._writer.shutdown(wait=False)
 
     # --- provisioning -----------------------------------------------------------------------
 

@@ -1793,3 +1793,86 @@ class TestOverrideBands:
         for offset in (0, 1800, 7200):
             t = resolver(time.time() + offset)
             assert (t.heat, t.cool) == (17.0, 27.5)
+
+
+# ---------------------------------------------------------------------------
+# Occupancy eco: an empty room caps the schedule at eco (#180)
+# ---------------------------------------------------------------------------
+
+
+def _monday(hour: int) -> float:
+    # Evaluated per test: the TZ sweep switches the default zone after import.
+    return datetime(2025, 1, 6, hour, 0, 0, tzinfo=dt_util.DEFAULT_TIME_ZONE).timestamp()
+
+
+class TestRoomVacantCapsAtEco:
+    def _resolve(self, ts, blocks, **kwargs):
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
+
+        args = {
+            "override_until": None,
+            "override_heat": None,
+            "override_cool": None,
+            "vacation_until": None,
+            "vacation_temp": None,
+            "comfort_heat": 21.0,
+            "comfort_cool": 24.0,
+            "eco_heat": 17.0,
+            "eco_cool": 27.0,
+        }
+        args.update(kwargs)
+        return resolve_targets_at_time(ts, blocks, **args)
+
+    def test_comfort_block_falls_to_eco(self):
+        blocks = {"monday": [{"from": "08:00:00", "to": "12:00:00", "data": {}}]}
+        assert self._resolve(_monday(10), blocks, room_vacant=True) == TargetTemps(17.0, 27.0)
+
+    def test_without_schedule_comfort_falls_to_eco(self):
+        assert self._resolve(_monday(10), None, room_vacant=True) == TargetTemps(17.0, 27.0)
+
+    def test_block_below_eco_is_not_raised(self):
+        blocks = {"monday": [{"from": "08:00:00", "to": "12:00:00", "data": {"temperature": 16.0}}]}
+        assert self._resolve(_monday(10), blocks, room_vacant=True) == TargetTemps(16.0, 27.0)
+
+    def test_schedule_off_stays_off(self):
+        blocks = {"monday": [{"from": "08:00:00", "to": "12:00:00", "data": {}}]}
+        result = self._resolve(_monday(6), blocks, room_vacant=True, schedule_off_action="off")
+        assert result == TargetTemps(None, None)
+
+    def test_override_wins(self):
+        result = self._resolve(
+            _monday(10),
+            None,
+            room_vacant=True,
+            override_heat=23.0,
+            override_cool=25.0,
+            override_until=_monday(10) + 3600,
+        )
+        assert result == TargetTemps(23.0, 25.0)
+
+    def test_occupied_room_follows_schedule(self):
+        assert self._resolve(_monday(10), None) == TargetTemps(21.0, 24.0)
+
+
+class TestCapToEco:
+    def test_caps_heat_down_and_cool_up(self):
+        from custom_components.roommind.utils.schedule_utils import cap_to_eco
+
+        assert cap_to_eco(TargetTemps(21.0, 24.0), 17.0, 27.0) == TargetTemps(17.0, 27.0)
+
+    def test_keeps_lower_demand_and_missing_sides(self):
+        from custom_components.roommind.utils.schedule_utils import cap_to_eco
+
+        assert cap_to_eco(TargetTemps(15.0, 28.0), 17.0, 27.0) == TargetTemps(15.0, 28.0)
+        assert cap_to_eco(TargetTemps(None, 24.0), 17.0, 27.0) == TargetTemps(None, 27.0)
+        assert cap_to_eco(TargetTemps(21.0, None), 17.0, 27.0) == TargetTemps(17.0, None)
+
+
+def test_make_target_resolver_caps_an_empty_room_over_the_horizon():
+    """The MPC horizon must not pre-heat an empty room towards a later comfort block (#180)."""
+    from custom_components.roommind.utils.schedule_utils import make_target_resolver
+
+    room = {"comfort_heat": 21.0, "comfort_cool": 24.0, "eco_heat": 17.0, "eco_cool": 27.0}
+    resolver = make_target_resolver(None, room, {}, room_vacant=True)
+    assert resolver(time.time() + 3600) == TargetTemps(17.0, 27.0)
+    assert make_target_resolver(None, room, {})(time.time()) == TargetTemps(21.0, 24.0)

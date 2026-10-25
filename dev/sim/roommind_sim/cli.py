@@ -191,6 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         created=time.time(),
     )
     py = _python(args.ha)
+    max_real = parse_duration(args.max_real)
     print(f"run {inst.dir.name}: {scn.name}, {format_offset(scn.duration)} simulated", flush=True)
     print(f"  RoomMind {src.get('git', '?')} ({src['path']})", flush=True)
     t0 = time.time()
@@ -212,8 +213,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 last, last_change = progress, time.time()
                 if progress and not args.quiet:
                     print(f"\r  {progress}", end="", flush=True)
-            elif time.time() - last_change > args.stall_timeout:
-                print(f"\nno progress for {args.stall_timeout:.0f}s real, killing the run", file=sys.stderr)
+            elif time.time() - last_change > args.stall_timeout or time.time() - t0 > max_real:
+                why = "no progress" if time.time() - last_change > args.stall_timeout else "--max-real reached"
+                print(f"\n{why} after {time.time() - t0:.0f}s real, killing the run", file=sys.stderr)
                 proc.terminate()
                 try:
                     proc.wait(30)
@@ -233,6 +235,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     _print_summary(summary, real)
     if not args.keep:
         _shrink_run(inst)
+    housekeeping()
     print(f"report: {inst.dir / 'report.html'}")
     if code != 0:
         return 3
@@ -331,14 +334,58 @@ def cmd_suite(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
+KEEP_RUN_DAYS = 3
+MAX_RUNS_BYTES = 2 * 1024**3
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink())
+
+
+def housekeeping() -> None:
+    """Runs after every batch run so the disk cannot fill up unattended.
+
+    Deletes finished runs older than KEEP_RUN_DAYS, then the oldest finished runs while
+    all runs together exceed MAX_RUNS_BYTES. Running runs and runs younger than 6 h stay.
+    """
+    runs_dir = inst_mod.sim_home() / "runs"
+    if not runs_dir.is_dir():
+        return
+    now = time.time()
+    finished = []
+    for run in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+        meta = Instance(run.name, run).meta()
+        running = bool(meta.get("pid")) and "finished" not in meta and inst_mod._pid_alive(int(meta["pid"]))
+        if not running and now - run.stat().st_mtime > 6 * 3600:
+            finished.append(run)
+    for run in [r for r in finished if now - r.stat().st_mtime > KEEP_RUN_DAYS * 86400]:
+        subprocess.run(["rm", "-rf", str(run)], check=False)
+        finished.remove(run)
+    total = _dir_size(runs_dir)
+    for run in finished:
+        if total <= MAX_RUNS_BYTES:
+            break
+        size = _dir_size(run)
+        subprocess.run(["rm", "-rf", str(run)], check=False)
+        total -= size
+    for inst in inst_mod.list_instances():
+        for shot in (inst.dir / "shots").glob("*.png"):
+            if now - shot.stat().st_mtime > KEEP_RUN_DAYS * 86400:
+                shot.unlink()
+
+
 def cmd_prune(args: argparse.Namespace) -> int:
     runs_dir = inst_mod.sim_home() / "runs"
     runs = sorted(p for p in runs_dir.iterdir() if p.is_dir()) if runs_dir.is_dir() else []
     keep = set(runs[-args.keep :]) if args.keep else set()
-    cutoff = time.time() - parse_duration(args.older_than) if args.older_than else None
-    removed = 0
+    # Never delete recent or still running runs: parallel agents/sessions use them as evidence.
+    cutoff = time.time() - parse_duration(args.older_than or "6h")
+    removed = skipped = 0
     for run in runs:
-        if run in keep or (cutoff is not None and run.stat().st_mtime > cutoff):
+        meta = Instance(run.name, run).meta()
+        running = bool(meta.get("pid")) and "finished" not in meta and inst_mod._pid_alive(int(meta["pid"]))
+        if run in keep or running or run.stat().st_mtime > cutoff:
+            skipped += run not in keep
             continue
         subprocess.run(["rm", "-rf", str(run)], check=True)
         removed += 1
@@ -347,7 +394,9 @@ def cmd_prune(args: argparse.Namespace) -> int:
         for shot in sorted((inst.dir / "shots").glob("*.png"))[: -args.keep_shots or None]:
             shot.unlink()
             shots += 1
-    print(f"removed {removed} run(s) and {shots} screenshot(s); kept {len(runs) - removed} run(s)")
+    print(
+        f"removed {removed} run(s) and {shots} screenshot(s); kept {len(runs) - removed} run(s) ({skipped} recent or running)"
+    )
     return 0
 
 
@@ -382,12 +431,15 @@ def cmd_up(args: argparse.Namespace) -> int:
         boot_args += ["--mode", "scaled", "--factor", str(args.speed)]
     elif args.paused and not args.catch_up:
         boot_args += ["--mode", "paused"]
-    launcher = inst_mod.start_live(inst, _python(args.ha), boot_args, int(parse_duration(args.ttl)))
+    ttl_s = int(parse_duration(args.ttl))
+    boot_args += ["--ttl", str(ttl_s)]  # also enforced without systemd
+    launcher = inst_mod.start_live(inst, _python(args.ha), boot_args, ttl_s)
     print(f"starting {args.name} ({launcher}) from {REPO_ROOT} ...", flush=True)
     if not _wait_ready(inst):
         print(f"not ready after {READY_TIMEOUT_S}s; check: sim logs {args.name}", file=sys.stderr)
         return 1
-    print(f"ready: {inst.url()}  (local http://127.0.0.1:{port})")
+    stop_at = datetime.fromtimestamp(time.time() + ttl_s).strftime("%H:%M")
+    print(f"ready: {inst.url()}  (local http://127.0.0.1:{port}), stops by itself at {stop_at} (--ttl)")
     return 0
 
 
@@ -567,9 +619,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     b = json.loads((b_dir / "summary.json").read_text())
     print(f"A: {a_dir.name}  ({(a.get('source') or {}).get('git', '?')})")
     print(f"B: {b_dir.name}  ({(b.get('source') or {}).get('git', '?')})")
-    for group in ("rooms", "devices", "model"):
-        for name, ma in a["metrics"][group].items():
-            mb = b["metrics"][group].get(name, {})
+    for group in ("rooms", "devices", "covers", "model"):
+        for name, ma in a["metrics"].get(group, {}).items():
+            mb = b["metrics"].get(group, {}).get(name, {})
             rows = []
             for key, va in ma.items():
                 vb = mb.get(key)
@@ -578,14 +630,31 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     pct = f" ({100 * delta / va:+.0f}%)" if va else ""
                     rows.append(f"    {key:22} {va:>10} -> {vb:<10} {delta:+.3g}{pct}")
             if rows:
-                print(f"  {dict(rooms='room', devices='device', model='model')[group]} {name}")
+                print(f"  {dict(rooms='room', devices='device', covers='cover', model='model')[group]} {name}")
                 print("\n".join(rows))
     ea = {e["label"]: e["passed"] for e in a.get("expectations", [])}
     for e in b.get("expectations", []):
         before = ea.get(e["label"])
         if before is not None and before != e["passed"]:
             print(f"  expectation {e['label']}: {'PASS' if before else 'FAIL'} -> {'PASS' if e['passed'] else 'FAIL'}")
+    if getattr(args, "timeline", False):
+        return _compare_timelines(a_dir, b_dir)
     return 0
+
+
+def _compare_timelines(a_dir: Path, b_dir: Path) -> int:
+    from .analysis.determinism import first_divergence
+
+    diff = first_divergence(a_dir, b_dir)
+    if diff is None:
+        print("  timelines identical")
+        return 0
+    rec = diff["a"] or diff["b"] or {}
+    when = _fmt_time(rec["t"]) if "t" in rec else "?"
+    print(f"  timelines differ: {diff['stream']} record {diff['index']} at {when}")
+    print(f"    A {json.dumps(diff['a'], sort_keys=True)[:600]}")
+    print(f"    B {json.dumps(diff['b'], sort_keys=True)[:600]}")
+    return 1
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -640,6 +709,7 @@ def _parser() -> argparse.ArgumentParser:
         default=300.0,
         help="abort when the sim clock does not move for this many real seconds",
     )
+    run.add_argument("--max-real", default="2h", help="hard limit on real run time")
     run.set_defaults(func=cmd_run)
 
     up = sub.add_parser("up", help="start a live instance (UI on the LAN)")
@@ -651,7 +721,7 @@ def _parser() -> argparse.ArgumentParser:
     up.add_argument("--catch-up", action="store_true", help="turbo until real now, then real time")
     up.add_argument("--paused", action="store_true")
     up.add_argument("--speed", type=float, help="time-lapse factor")
-    up.add_argument("--ttl", default="4h", help="auto-stop after this real time")
+    up.add_argument("--ttl", default="2h", help="auto-stop after this real time (default 2h)")
     up.add_argument("--ha", default=DEFAULT_HA_VERSION)
     up.add_argument("--roommind-src", help="RoomMind code: path or git ref; default: this checkout")
     up.add_argument("--recorder", action="store_true")
@@ -709,7 +779,9 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--lang", default="de")
     shot.add_argument("--wait", type=float, default=4.0, help="seconds to let the panel settle")
     shot.add_argument("--full", action="store_true", help="full page")
-    shot.add_argument("--do", action="append", default=[], help="click:<text> | wait:<ms> | scroll:<px>, repeatable")
+    shot.add_argument(
+        "--do", action="append", default=[], help="click:<text> | css:<selector> | wait:<ms> | scroll:<px>, repeatable"
+    )
     shot.add_argument("--out")
     shot.set_defaults(func=cmd_shot)
 
@@ -722,7 +794,9 @@ def _parser() -> argparse.ArgumentParser:
 
     prune = sub.add_parser("prune", help="delete old runs and screenshots")
     prune.add_argument("--keep", type=int, default=20, help="keep the newest N runs")
-    prune.add_argument("--older-than", help="only delete runs older than this, e.g. 7d")
+    prune.add_argument(
+        "--older-than", help="only delete runs older than this (default 6h; recent and running runs are always kept)"
+    )
     prune.add_argument("--keep-shots", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
 
@@ -739,6 +813,11 @@ def _parser() -> argparse.ArgumentParser:
     compare = sub.add_parser("compare", help="metric diff of two runs (names, paths or 'last')")
     compare.add_argument("a")
     compare.add_argument("b")
+    compare.add_argument(
+        "--timeline",
+        action="store_true",
+        help="also compare the timelines record by record (determinism check, exit 1 on a difference)",
+    )
     compare.set_defaults(func=cmd_compare)
 
     report = sub.add_parser("report", help="re-evaluate a run (name, path or 'last')")

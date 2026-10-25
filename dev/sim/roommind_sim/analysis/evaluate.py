@@ -114,6 +114,9 @@ def _metric(run: RunData, metrics: dict[str, Any], exp: dict[str, Any]) -> dict[
     elif group == "device":
         scope = metrics["devices"].get(exp.get("entity_id", ""), {})
         label += f"[{exp.get('entity_id')}]"
+    elif group == "cover":
+        scope = metrics.get("covers", {}).get(exp.get("entity_id", ""), {})
+        label += f"[{exp.get('entity_id')}]"
     elif group == "model":
         scope = metrics["model"].get(exp.get("room", ""), {})
         label += f"[{exp.get('room')}]"
@@ -191,19 +194,35 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
     lines = []
     for area, m in metrics["rooms"].items():
         lines.append(
-            f"room {area}: {m['temp_min']}..{m['temp_max']} °C, under {m['undershoot_kh']} Kh, over heat+0.5 {m['heat_overshoot_kh']} Kh, over cool {m['overshoot_kh']} Kh, in band {m['in_band_pct']}%"
+            f"room {area}: {m['temp_min']}..{m['temp_max']} °C, under {m['undershoot_kh']} Kh, over heat+0.5 {m['heat_overshoot_kh']} Kh (+{m['heat_coast_kh']} Kh coasting after setback), over cool {m['overshoot_kh']} Kh, in band {m['in_band_pct']}%"
             + (f", pred MAE {m['prediction_mae_30m']} K" if m.get("prediction_mae_30m") is not None else "")
         )
     for eid, m in metrics["devices"].items():
         lines.append(
             f"device {eid}: {m['commands']} cmds ({m['commands_per_hour']}/h, {m['redundant_commands']} no-op, {m['rejected_commands']} rejected), "
             f"{m['device_starts']} starts, active {m['active_h']} h, {m['electric_kwh']} kWh el"
+            + (f", valve {m['valve_travel_per_day']} strokes/day" if m.get("valve_travel_per_day") is not None else "")
+            + (f", {m['valve_commands_per_hour']} valve cmds/h" if m.get("valve_commands_per_hour") is not None else "")
+        )
+    for eid, m in metrics.get("covers", {}).items():
+        lines.append(
+            f"cover {eid}: {m['commands']} cmds (max {m['max_commands_per_day']}/day, first move from "
+            f"{m['earliest_first_move_h']} h), shaded {m['shaded_h']} h at {m['mean_shaded_position']} % "
+            f"({m['shaded_while_heating_h']} h while heating), "
+            f"{m['sunny_days_unshaded']} of {m['sunny_days']} sunny days unshaded"
         )
     for area, m in metrics["model"].items():
         if m["learned_alpha_per_h"] is not None:
             lines.append(
-                f"model {area}: alpha learned {m['learned_alpha_per_h']} vs lumped truth {m['truth_alpha_per_h']} 1/h ({m['n_updates']} updates)"
+                f"model {area}: alpha learned {m['learned_alpha_per_h']} vs lumped truth {m['truth_alpha_per_h']} 1/h, "
+                f"beta_s learned {m['learned_beta_s']} vs truth {m['truth_beta_s']} K/h per kW/m² ({m['n_updates']} updates)"
             )
+            for side in ("h", "c"):
+                if m.get(f"truth_beta_{side}") is not None:
+                    lines.append(
+                        f"model {area}: beta_{side} learned {m[f'learned_beta_{side}']} vs truth "
+                        f"{m[f'truth_beta_{side}']} K/h while running (ratio {m[f'beta_{side}_ratio']})"
+                    )
     for w in warnings:
         lines.append(f"WARNING {w['invariant']}: {w['count']}x, e.g. {w['violations'][0]['detail']}")
     return lines

@@ -14,6 +14,8 @@ from ..const import (
     COVER_MIN_HOLD_SECONDS,
     COVER_POS_DEADBAND,
     COVER_POS_SCALE,
+    COVER_REOPEN_HOLD_SECONDS,
+    COVER_REOPEN_STEP,
     COVER_SOLAR_MIN,
     COVER_TRANSITION_SETTLE_S,
     COVER_USER_CONFLICT_THRESHOLD,
@@ -160,6 +162,7 @@ class CoverManager:
         covers_deploy_threshold: float,
         covers_min_position: int,
         covers_snap_deploy: bool = False,
+        shade_by_need: bool = False,
         predicted_peak_temp: float | None,
         target_temp: float,
         q_solar: float,
@@ -256,6 +259,12 @@ class CoverManager:
 
         if covers_snap_deploy:
             desired_pos = covers_min_position
+        elif shade_by_need:
+            # Close just far enough that the solar overshoot left over is the
+            # threshold: shading factor threshold/excess, cover effectiveness
+            # COVER_MAX_EFFECTIVENESS. The unit cools what is left, the room keeps daylight.
+            needed = (1.0 - covers_deploy_threshold / excess) / COVER_MAX_EFFECTIVENESS
+            desired_pos = max(covers_min_position, 100 - int(min(1.0, needed) * 100))
         else:
             raw_close_pct = min(100, int((excess - covers_deploy_threshold) * COVER_POS_SCALE))
             desired_pos = max(covers_min_position, 100 - raw_close_pct)
@@ -266,6 +275,19 @@ class CoverManager:
 
         if not hold_time_ok:
             return CoverDecision(target_position=current, changed=False, reason="min_hold_time")
+
+        # Reopening inside an episode follows the slowly falling afternoon excess;
+        # in 20 % steps that was a move every 15 min. An excess just above the
+        # threshold maps to fully open and counts as reopening too, otherwise the
+        # cover would retract at the threshold instead of below the hysteresis
+        # band. The retract below the band (deadband path above) is not affected.
+        reopen_ceiling = state.baseline_position if state.baseline_position is not None else 100
+        if (
+            not was_forced
+            and current < desired_pos <= reopen_ceiling
+            and (desired_pos - current < COVER_REOPEN_STEP or now - state.last_change_ts < COVER_REOPEN_HOLD_SECONDS)
+        ):
+            return CoverDecision(target_position=current, changed=False, reason="reopen_hold")
 
         if abs(desired_pos - current) <= COVER_POS_DEADBAND:
             return CoverDecision(target_position=current, changed=False, reason="deadband")
@@ -373,7 +395,10 @@ class CoverManager:
     ) -> CoverDecision:
         current = state.current_position
         target = state.baseline_position if state.baseline_position is not None else 100
-        if current >= target or abs(target - current) <= COVER_POS_DEADBAND:
+        # The deadband must not end an episode on RoomMind's own intermediate
+        # position: it would be handed to the user and kept overnight.
+        restore_pending = state.owned and state.last_commanded_position != target
+        if current >= target or (abs(target - current) <= COVER_POS_DEADBAND and not restore_pending):
             if state.baseline_position is not None:
                 # Episode ends at/near the user baseline without a command —
                 # hand the position back like the command-restore path below.
