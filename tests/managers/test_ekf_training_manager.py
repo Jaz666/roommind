@@ -50,6 +50,8 @@ class TestFlush:
             q_residual=0.0,
             q_occupancy=0.0,
             q_rebound=None,
+            heating_source="radiator",
+            dehumidifier_kw=0.0,
         )
         assert "room1" not in mgr._accumulated_dt
         assert "room1" not in mgr._accumulated_mode

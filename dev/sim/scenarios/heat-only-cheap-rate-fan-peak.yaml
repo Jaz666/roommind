@@ -1,0 +1,152 @@
+name: heat-only-cheap-rate-fan-peak
+description: Heat Only allows AC before the boost window and preserves configured
+  fan-only at the GMT cutoff while radiators heat.
+tags:
+- smoke
+- household
+- tariff
+- ac
+start: 2026-10-27T02:00
+duration: 230m
+location:
+  latitude: 51.5
+  longitude: -0.1
+  time_zone: Europe/London
+weather:
+  profile: temperate
+  monthly_mean_c:
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  daily_amplitude_c:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  noise_c: 0
+house:
+  building: bestand_teilsaniert
+  outdoor:
+    sensors:
+      temperature: sensor.outdoor
+  rooms:
+    bedroom:
+      floor_area_m2: 1000
+      initial:
+        temperature: 18
+      devices:
+      - entity_id: climate.bedroom_ac
+        profile: generic_split_ac
+      - entity_id: climate.bedroom_trv
+        profile: generic_trv
+      sensors:
+        temperature:
+          entity_id: sensor.bedroom_temp
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor
+    control_mode: bangbang
+    compressor_groups:
+    - id: bedroom
+      name: Bedroom outdoor unit
+      members:
+      - climate.bedroom_ac
+      min_run_minutes: 60
+      min_off_minutes: 1
+      shared_ac_control: true
+      night_cooling_members:
+      - climate.bedroom_ac
+    ac_tariff_enabled: true
+    ac_off_peak_start: 00:00
+    ac_off_peak_end: 05:00
+    ac_morning_boost_enabled: true
+    ac_morning_boost_minutes: 30
+    ac_morning_boost_offset: 3
+    ac_morning_boost_rooms: []
+  rooms:
+    bedroom:
+      devices:
+      - entity_id: climate.bedroom_ac
+        type: ac
+        setpoint_mode: direct
+        idle_action: fan_only
+        idle_fan_mode: low
+      - entity_id: climate.bedroom_trv
+        type: trv
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: heat_only
+      comfort_heat: 19
+      comfort_cool: 19.5
+      eco_heat: 19
+      eco_cool: 19.5
+      heat_source_orchestration: false
+timeline:
+- at: +1m
+  do: roommind.ws
+  type: roommind/schedules/save
+  name: Morning
+  revision: 0
+  area_ids:
+  - bedroom
+  days:
+    monday: &id001
+    - from: 00:00
+      to: 07:00
+      data:
+        heat_temperature: 19
+        cool_temperature: 19.5
+    - from: 07:00
+      to: '22:00'
+      data:
+        heat_temperature: 20
+        cool_temperature: 20.5
+    - from: '22:00'
+      to: '24:00'
+      data:
+        heat_temperature: 19
+        cool_temperature: 19.5
+    tuesday: *id001
+    wednesday: *id001
+    thursday: *id001
+    friday: *id001
+    saturday: *id001
+    sunday: *id001
+- at: +2m
+  do: roommind.ws
+  type: roommind/settings/save
+  ac_morning_boost_rooms:
+  - bedroom
+expect:
+- invariant: no_heat_and_cool_same_group
+- check: dev('climate.bedroom_ac').mode == 'heat'
+  at: +20m
+  label: AC heats long before morning boost
+- check: dev('climate.bedroom_trv').mode == 'off'
+  at: +20m
+  label: Radiator parked during cheap AC heating
+- check: dev('climate.bedroom_ac').mode == 'heat'
+  at: +160m
+  label: Heat Only morning boost runs
+- check: dev('climate.bedroom_ac').mode == 'fan_only'
+  at: +190m
+  label: Peak cutoff keeps fan-only circulation
+- check: dev('climate.bedroom_trv').mode == 'heat'
+  at: +190m
+  label: Radiator takes over at peak

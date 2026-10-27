@@ -1051,6 +1051,27 @@ export class RsDeviceSection extends LitElement {
           : nothing
       }
       ${
+        !isThermostat
+          ? html`<div class="detail-field">
+              <ha-entity-picker
+                .hass=${this.hass}
+                .includeDomains=${["sensor"]}
+                .value=${device.energy_sensor ?? ""}
+                .label=${localize("learning.ac_energy", lang)}
+                allow-custom-entity
+                @value-changed=${(e: CustomEvent) => {
+                  this._fireDeviceChanged(
+                    this.devices.map((d) =>
+                      d.entity_id === entityId ? { ...d, energy_sensor: e.detail?.value ?? "" } : d,
+                    ),
+                  );
+                }}
+              ></ha-entity-picker>
+              <p class="hint">${localize("learning.ac_energy_hint", lang)}</p>
+            </div>`
+          : nothing
+      }
+      ${
         isThermostat && this.valveProtectionEnabled
           ? html`
               <div class="detail-toggle-row">

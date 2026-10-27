@@ -116,6 +116,10 @@ _ROOM_SAVE_FIELDS = (
     "devices",
     "temperature_sensor",
     "humidity_sensor",
+    "dehumidifier_power_sensor",
+    "dehumidifier_entity",
+    "dehumidifier_switch",
+    "preheat_max_minutes",
     "occupancy_sensors",
     "occupancy_eco_enabled",
     "occupancy_eco_delay",
@@ -164,6 +168,8 @@ _ROOM_SAVE_FIELDS = (
 )
 
 _SETTINGS_SAVE_FIELDS = (
+    "heat_pump_power_sensor",
+    "heat_pump_active_watts",
     "outdoor_temp_sensor",
     "outdoor_humidity_sensor",
     "outdoor_cooling_min",
@@ -427,6 +433,7 @@ async def websocket_list_rooms(
                     vol.Optional("coil_dry_minutes", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
                     vol.Optional("coil_dry_mode", default=""): vol.In(["", *COIL_DRY_MODES]),
                     vol.Optional("coil_dry_fan_mode", default=""): str,
+                    vol.Optional("energy_sensor"): vol.Any("", cv.entity_domain("sensor")),
                     vol.Optional("valve_opening_entity"): _number_entity_or_empty,
                     vol.Optional("valve_closing_entity"): _number_entity_or_empty,
                 },
@@ -437,6 +444,10 @@ async def websocket_list_rooms(
         ],
         vol.Optional("temperature_sensor"): str,
         vol.Optional("humidity_sensor"): str,
+        vol.Optional("dehumidifier_power_sensor"): vol.Any("", cv.entity_domain("sensor")),
+        vol.Optional("dehumidifier_entity"): vol.Any("", cv.entity_domain("humidifier")),
+        vol.Optional("dehumidifier_switch"): vol.Any("", cv.entity_domain("switch")),
+        vol.Optional("preheat_max_minutes"): vol.All(vol.Coerce(int), vol.Range(min=0, max=720)),
         vol.Optional("occupancy_sensors"): [str],
         vol.Optional("occupancy_eco_enabled"): bool,
         vol.Optional("occupancy_eco_delay"): vol.All(
@@ -539,7 +550,8 @@ async def websocket_save_room(
             area_id,
         )
 
-    old_valves = get_valve_entities((store.get_room(area_id) or {}).get("devices", []))
+    old_room = dict(store.get_room(area_id) or {})
+    old_valves = get_valve_entities(old_room.get("devices", []))
     room = await store.async_save_room(area_id, config)
     new_valves = get_valve_entities(room.get("devices", []))
     await _async_release_dropped_valves(hass, area_id, old_valves, new_valves)
@@ -547,6 +559,10 @@ async def websocket_save_room(
     # Notify coordinator to create/update sensor entities for the room
     coordinator = _get_coordinator(hass)
     if coordinator:
+        reference_changed = old_room and room.get("temperature_sensor", "") != old_room.get("temperature_sensor", "")
+        if reference_changed:
+            coordinator.reset_thermal_room(area_id)
+            await store.async_save_thermal_data(coordinator._model_manager.to_dict())
         await coordinator.async_room_added(room)
 
     connection.send_result(msg["id"], {"room": room})
@@ -593,7 +609,8 @@ async def websocket_delete_room(
     store = hass.data[DOMAIN]["store"]
     area_id = msg["area_id"]
 
-    old_valves = get_valve_entities((store.get_room(area_id) or {}).get("devices", []))
+    old_room = dict(store.get_room(area_id) or {})
+    old_valves = get_valve_entities(old_room.get("devices", []))
     try:
         await store.async_delete_room(area_id)
     except KeyError:
@@ -755,6 +772,8 @@ async def websocket_get_settings(
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "roommind/settings/save",
+        vol.Optional("heat_pump_power_sensor"): vol.Any("", cv.entity_domain("sensor")),
+        vol.Optional("heat_pump_active_watts"): vol.All(vol.Coerce(float), vol.Range(min=10, max=10000)),
         vol.Optional("outdoor_temp_sensor"): str,
         vol.Optional("outdoor_humidity_sensor"): str,
         vol.Optional("outdoor_cooling_min"): vol.Coerce(float),

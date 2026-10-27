@@ -44,6 +44,14 @@ def preheat_max_blocks(comfort_weight: float, dt_minutes: float = 5.0) -> int | 
     return int(hours * 60 / dt_minutes)
 
 
+def room_preheat_blocks(comfort_weight: float, room: dict, system: str) -> int:
+    """Bound schedule anticipation independently of the cheap-rate preparation window."""
+    maximum = room.get("preheat_max_minutes", 720 if system == "underfloor" else 60)
+    ceiling = max(0, int(maximum / 5))
+    slider = preheat_max_blocks(comfort_weight)
+    return min(ceiling, slider) if slider is not None else ceiling
+
+
 def slow_start_penalty(min_run_blocks: int, dt_minutes: float = 5.0) -> float:
     """``MPCOptimizer.start_penalty`` for a run of *min_run_blocks*: only slow systems pay for starts.
 
@@ -705,6 +713,7 @@ class MPCOptimizer:
 
         # Drift temperature: where the room would go with no HVAC
         T_drift = T_room + beta * (T_outdoor - T_room)
+        T_drift += beta * self.model.Q_aux / alpha if alpha > 0.01 else self.model.Q_aux * dt_h
         # Add predicted solar gain to drift
         if alpha > 0.01:
             T_drift += beta * self.model.Q_solar * q_solar / alpha

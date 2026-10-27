@@ -302,6 +302,16 @@ class RoomMindStore:
             "devices": config.get("devices", []),
             "temperature_sensor": config.get("temperature_sensor", ""),
             "humidity_sensor": config.get("humidity_sensor", ""),
+            "dehumidifier_power_sensor": config.get("dehumidifier_power_sensor", ""),
+            "dehumidifier_entity": config.get("dehumidifier_entity", ""),
+            "dehumidifier_switch": config.get("dehumidifier_switch", ""),
+            "preheat_max_minutes": config.get(
+                "preheat_max_minutes",
+                720
+                if get_room_heating_system_type(config.get("devices", [])) == "underfloor"
+                or config.get("heating_system_type") == "underfloor"
+                else 60,
+            ),
             "occupancy_sensors": config.get("occupancy_sensors", []),
             "occupancy_eco_enabled": config.get("occupancy_eco_enabled", False),
             "occupancy_eco_delay": config.get("occupancy_eco_delay", DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES),

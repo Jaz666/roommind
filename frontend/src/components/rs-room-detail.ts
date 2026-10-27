@@ -58,6 +58,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _devices: DeviceConfig[] = [];
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
+  @state() private _dehumidifierPowerSensor = "";
+  @state() private _preheatMaxMinutes = 60;
   @state() private _selectedOccupancySensors: Set<string> = new Set();
   @state() private _occupancyEcoEnabled = false;
   @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
@@ -269,6 +271,10 @@ export class RsRoomDetail extends LitElement {
       }
       this._selectedTempSensor = this.config.temperature_sensor;
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
+      this._dehumidifierPowerSensor = this.config.dehumidifier_power_sensor ?? "";
+      this._preheatMaxMinutes =
+        this.config.preheat_max_minutes ??
+        (this.config.heating_system_type === "underfloor" ? 720 : 60);
       this._selectedOccupancySensors = new Set(this.config.occupancy_sensors ?? []);
       this._occupancyEcoEnabled = this.config.occupancy_eco_enabled ?? false;
       this._occupancyEcoDelay = this.config.occupancy_eco_delay ?? DEFAULT_OCCUPANCY_ECO_DELAY;
@@ -628,6 +634,8 @@ export class RsRoomDetail extends LitElement {
                       .area=${this.area}
                       .editing=${false}
                       .temperatureSensor=${this._selectedTempSensor}
+                      .dehumidifierPowerSensor=${this._dehumidifierPowerSensor}
+                      .preheatMaxMinutes=${this._preheatMaxMinutes}
                       .humiditySensor=${this._selectedHumiditySensor}
                       .occupancySensors=${this._selectedOccupancySensors}
                       .occupancyEcoEnabled=${this._occupancyEcoEnabled}
@@ -898,6 +906,8 @@ export class RsRoomDetail extends LitElement {
             .area=${this.area}
             .editing=${true}
             .temperatureSensor=${this._selectedTempSensor}
+            .dehumidifierPowerSensor=${this._dehumidifierPowerSensor}
+            .preheatMaxMinutes=${this._preheatMaxMinutes}
             .humiditySensor=${this._selectedHumiditySensor}
             .occupancySensors=${this._selectedOccupancySensors}
             .occupancyEcoEnabled=${this._occupancyEcoEnabled}
@@ -1101,6 +1111,10 @@ export class RsRoomDetail extends LitElement {
     const { key, value } = e.detail;
     if (key === "temperature_sensor") {
       this._selectedTempSensor = value as string;
+    } else if (key === "dehumidifier_power_sensor") {
+      this._dehumidifierPowerSensor = value as string;
+    } else if (key === "preheat_max_minutes") {
+      this._preheatMaxMinutes = value as number;
     } else if (key === "humidity_sensor") {
       this._selectedHumiditySensor = value as string;
     } else if (key === "occupancy_sensors") {
@@ -1251,6 +1265,8 @@ export class RsRoomDetail extends LitElement {
         devices: this._devices,
         temperature_sensor: this._selectedTempSensor,
         humidity_sensor: this._selectedHumiditySensor,
+        dehumidifier_power_sensor: this._dehumidifierPowerSensor,
+        preheat_max_minutes: this._preheatMaxMinutes,
         occupancy_sensors: [...this._selectedOccupancySensors],
         occupancy_eco_enabled: this._occupancyEcoEnabled,
         occupancy_eco_delay: this._occupancyEcoDelay,

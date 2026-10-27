@@ -21,6 +21,9 @@ HISTORY_48H_MAX_ROWS = 1000
 _ROOM_ENTITY_KEYS = (
     "temperature_sensor",
     "humidity_sensor",
+    "dehumidifier_power_sensor",
+    "dehumidifier_entity",
+    "dehumidifier_switch",
     "schedule_selector_entity",
     "cover_schedule_selector_entity",
 )
@@ -36,6 +39,9 @@ def _build_model_info(estimator: Any) -> dict[str, Any]:
     return {
         "alpha": round(estimator._x[1], 6),
         "beta_h": round(estimator._x[2], 4),
+        "beta_ac": round(estimator._x[7], 4),
+        "beta_dehumidifier_per_kw": round(estimator._x[8], 4),
+        "n_ac_heating": estimator._n_ac_heating,
         "beta_c": round(estimator._x[3], 4),
         "beta_f": round(estimator._x[6], 4),
         "n_updates": estimator._n_updates,
@@ -65,6 +71,7 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "idle_fan_mode": dev.get("idle_fan_mode", ""),
             "setpoint_mode": dev.get("setpoint_mode", "proportional"),
             "setpoint_offset": dev.get("setpoint_offset", 0.0),
+            "energy_sensor": dev.get("energy_sensor", ""),
             "coil_dry": dev.get("coil_dry", "inherit"),
             "coil_dry_minutes": dev.get("coil_dry_minutes", 0),
             "coil_dry_mode": dev.get("coil_dry_mode", ""),
@@ -333,6 +340,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
             }
             if blocks:
                 room_diag["schedule_blocks"] = blocks
+            reusable = store.get_schedules().get(config.get("roommind_schedule_id", ""))
+            if reusable:
+                room_diag["roommind_schedule"] = _plain(reusable)
 
         # Window manager state
         if coordinator:

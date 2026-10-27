@@ -35,7 +35,7 @@ from .mpc_controller import (
     outdoor_gate_limits,
     valve_demand,
 )
-from .mpc_optimizer import MPCOptimizer, preheat_max_blocks, slow_start_penalty
+from .mpc_optimizer import MPCOptimizer, room_preheat_blocks, slow_start_penalty
 from .residual_heat import (
     advance_rebound,
     build_residual_series,
@@ -415,7 +415,7 @@ def _simulate_mpc(
                 approach_rate=approach_rate,
                 start_penalty=start_penalty,
                 fast_heater_shares_model=acs_can_heat,
-                preheat_max_blocks=preheat_max_blocks(cw, PLAN_DT_MINUTES),
+                preheat_max_blocks=room_preheat_blocks(cw, room_config, rules),
             )
             plan = optimizer.optimize(
                 T_room=T,
@@ -436,7 +436,10 @@ def _simulate_mpc(
                 T,
                 heat_series,
                 cool_series,
-                guard_blocks=max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1),
+                guard_blocks=min(
+                    room_preheat_blocks(cw, room_config, rules) + 1,
+                    max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1),
+                ),
                 slow_heat=slow_heat,
                 previous_mode=prev_action,
                 heat_in_min_run=in_run

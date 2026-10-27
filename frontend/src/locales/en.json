@@ -681,5 +681,17 @@
   "tariff.boost_badge_hint": "Preparing the scheduled morning target during the final off-peak minutes; no extra room preheating.",
   "tariff.hold_badge": "Morning warmth",
   "tariff.hold_badge_hint": "Cooling uses the upcoming morning limit until its scheduled change, preserving the earlier preparation.",
-  "devices.valve_closing_entity_hint": "Keeps the valve at the set opening whatever the thermostat's own control wants. Filled in automatically when the device has one."
+  "devices.valve_closing_entity_hint": "Keeps the valve at the set opening whatever the thermostat's own control wants. Filled in automatically when the device has one.",
+  "learning.heat_pump_power": "Whole heat pump power sensor (W)",
+  "learning.heat_pump_hint": "Supports detection of compressor activity. Shared electrical power is not allocated to rooms.",
+  "learning.active_watts": "Active threshold above fan-only consumption (W)",
+  "learning.ac_energy": "AC energy sensor (Wh or kWh)",
+  "learning.ac_energy_hint": "Optional cumulative energy. Delayed or unchanged readings do not prove the unit is idle.",
+  "learning.dehumidifier_power": "Dehumidifier power sensor (W or kW)",
+  "learning.dehumidifier_hint": "Learns its heat contribution without changing humidity control. Missing readings pause thermal learning.",
+  "learning.preheat_limit": "Maximum predictive preheating (minutes)",
+  "learning.preheat_hint": "0 disables predictive preheating. The separate cheap-rate morning boost remains available.",
+  "learning.radiator_strength": "Radiator heating strength",
+  "learning.ac_strength": "AC heating strength",
+  "learning.source_strength_hint": "Learned separately from confirmed single-source operation. A dash means this source is still learning."
 }

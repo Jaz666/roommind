@@ -38,6 +38,8 @@ export class RsSettings extends LitElement {
   @state() private _groupByFloor = false;
   @state() private _climateControlActive = true;
   @state() private _learningDisabledRooms: string[] = [];
+  @state() private _heatPumpPowerSensor = "";
+  @state() private _heatPumpActiveWatts = 150;
   @state() private _outdoorTempSensor = "";
   @state() private _outdoorHumiditySensor = "";
   @state() private _outdoorCoolingMin = 16;
@@ -105,6 +107,8 @@ export class RsSettings extends LitElement {
       this._groupByFloor = s.group_by_floor ?? false;
       this._climateControlActive = s.climate_control_active ?? true;
       this._learningDisabledRooms = s.learning_disabled_rooms ?? [];
+      this._heatPumpPowerSensor = s.heat_pump_power_sensor ?? "";
+      this._heatPumpActiveWatts = s.heat_pump_active_watts ?? 150;
       this._outdoorTempSensor = s.outdoor_temp_sensor ?? "";
       this._outdoorHumiditySensor = s.outdoor_humidity_sensor ?? "";
       this._outdoorCoolingMin = s.outdoor_cooling_min ?? 16;
@@ -190,6 +194,8 @@ export class RsSettings extends LitElement {
       >
         <rs-settings-sensors
           .hass=${this.hass}
+          .heatPumpPowerSensor=${this._heatPumpPowerSensor}
+          .heatPumpActiveWatts=${this._heatPumpActiveWatts}
           .outdoorTempSensor=${this._outdoorTempSensor}
           .outdoorHumiditySensor=${this._outdoorHumiditySensor}
           .weatherEntity=${this._weatherEntity}
@@ -415,6 +421,8 @@ export class RsSettings extends LitElement {
         group_by_floor: this._groupByFloor,
         climate_control_active: this._climateControlActive,
         learning_disabled_rooms: this._learningDisabledRooms,
+        heat_pump_power_sensor: this._heatPumpPowerSensor,
+        heat_pump_active_watts: this._heatPumpActiveWatts,
         outdoor_temp_sensor: this._outdoorTempSensor,
         outdoor_humidity_sensor: this._outdoorHumiditySensor,
         outdoor_cooling_min: this._outdoorCoolingMin,

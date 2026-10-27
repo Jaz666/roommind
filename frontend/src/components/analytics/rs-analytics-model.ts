@@ -147,7 +147,7 @@ export class RsAnalyticsModel extends LitElement {
               "analytics.info.time_constant",
             )}
             ${
-              canHeat
+              canHeat && m?.source_layout !== "mixed"
                 ? stat(
                     "heating_rate",
                     hasHeated && model
@@ -159,6 +159,14 @@ export class RsAnalyticsModel extends LitElement {
                     "",
                     "analytics.info.heating_rate",
                   )
+                : nothing
+            }
+            ${
+              m?.source_layout === "mixed"
+                ? html`
+                    ${stat("radiator_heating", n_heating - (m.n_ac_heating ?? 0) >= 10 ? toDisplayDelta(m.radiator_heating_strength ?? 0, this.hass).toFixed(1) + tempUnit(this.hass) + "/h" : ph, "learning.radiator_strength", "", "learning.source_strength_hint")}
+                    ${stat("ac_heating", (m.n_ac_heating ?? 0) >= 10 ? toDisplayDelta(m.ac_heating_strength ?? 0, this.hass).toFixed(1) + tempUnit(this.hass) + "/h" : ph, "learning.ac_strength", "", "learning.source_strength_hint")}
+                  `
                 : nothing
             }
             ${

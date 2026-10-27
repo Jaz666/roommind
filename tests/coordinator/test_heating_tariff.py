@@ -280,3 +280,52 @@ async def test_sensor_dropout_pauses_heating_without_discarding_cooling_hold(has
     assert coordinator._heating_tariff.state["living"]["heating_paused"]
     assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
     assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+@pytest.mark.parametrize("hour,minute", [(0, 1), (2, 0), (4, 45)])
+async def test_heat_only_uses_ac_throughout_cheap_rate(hass, mock_config_entry, hour, minute):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["living"].update(climate_mode="heat_only", heat_source_orchestration=False)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    live = await tariff_update(coordinator, hour, minute)
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+    assert not any(c.get("hvac_mode") == "cool" for c in calls(hass, A))
+
+    # Master demand follows the routed source even without orchestration enabled.
+    assert coordinator._collect_member_room_modes([T], live, store.get_rooms(), store.get_settings()) == []
+    assert coordinator._collect_member_room_modes([A], live, store.get_rooms(), store.get_settings()) == ["heating"]
+
+
+@pytest.mark.parametrize("initial", ["heat", "off", "fan_only"])
+async def test_peak_preserves_configured_fan_only_while_radiators_heat(hass, mock_config_entry, initial):
+    coordinator, store = setup(hass, mock_config_entry, states={A: initial})
+    enable(store)
+    room = store.get_rooms.return_value["living"]
+    room.update(climate_mode="heat_only")
+    ac = next(d for d in room["devices"] if d["entity_id"] == A)
+    ac.update(idle_action="fan_only", idle_fan_mode="Quiet")
+    # Fixture AC only advertises its basic modes; add the actual Toshiba capability.
+    original = hass.states.get
+
+    def states(eid):
+        state = original(eid)
+        if eid == A:
+            state.attributes.update(hvac_modes=["heat", "cool", "fan_only", "off"], fan_modes=["Quiet"])
+        return state
+
+    hass.states.get = states
+    await tariff_update(coordinator, 12, 0)
+    assert any(c.get("hvac_mode") == "fan_only" for c in calls(hass, A)) or initial == "fan_only"
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+
+
+@pytest.mark.parametrize("outdoor,expected", [(0, "radiator"), (18, "ac")])
+async def test_prediction_selects_current_orchestrated_source(hass, mock_config_entry, outdoor, expected):
+    coordinator, store = setup(hass, mock_config_entry, outdoor=outdoor)
+    store.get_settings.return_value.update(control_mode="bangbang", ac_tariff_enabled=False)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    live = await tariff_update(coordinator, 12, 0)
+    assert live["living"]["model_heating_source"] == expected

@@ -1,71 +1,27 @@
-# Household beta installation and rollback — 1.8.0b1
+# Household beta installation and rollback — 1.8.0b2
 
-This prerelease merges upstream RoomMind 1.8.0 while retaining our household
-controls. Read [the upstream update guide](upstream-1.8-update.md) for new features,
-changed Heat only semantics, first checks and downgrade considerations.
-Existing schedules, tariff settings and shared Toshiba configuration are retained.
+This prerelease adds source-aware radiator/AC learning, a measured dehumidifier heat input, bounded predictive preheating, and cheap-rate Heat Only AC heating with peak Fan Only circulation. Existing schedules, tariff settings and the shared Toshiba group are retained.
 
-Before installing, make a Home Assistant backup and download it. Also preserve
-an exact copy of `/config/custom_components/roommind` outside `custom_components`
-if your configuration-file access allows it. Record your installed version.
-Declared minimum HA version is 2026.5.0; simulator validation uses 2026.10.0.
+Read [the source-aware learning and setup guide](source-aware-learning.md), including its migration and measurement limitations. Mixed rooms will relearn their heating strengths; their shared room properties and cooling learning are retained. Single-source rooms keep their learning.
 
 ## Install
 
-Use HACS tracking **Jaz666/roommind**, select prerelease **1.8.0b1**, install it,
-and restart Home Assistant. Keep one RoomMind repository in HACS: an upstream
-update can overwrite the fork. Do not delete the configured RoomMind integration;
-the domain is still `roommind`, preserving rooms and settings.
+1. Make a Home Assistant backup and download it. Record your current version.
+2. In HACS, keep **Jaz666/roommind** as the one RoomMind repository. Select prerelease **1.8.0b2**, install, and restart HA. Do not delete the configured integration.
+3. Refresh the RoomMind panel. If the old frontend persists, use a hard refresh or private window.
+4. Follow [sensor setup](source-aware-learning.md#connect-this-households-sensors): whole-system CT, per-AC energy counters, and Living Room dehumidifier power. Installing the release does not silently configure these entities.
+5. Check each room's maximum predictive preheat time, AC idle action/fan speed, and Heat Only/Auto mode before the next cheap period.
 
-Alternatively, extract the verified release asset `roommind.zip`, replacing
-`/config/custom_components/roommind` with its contents. The ZIP root contains
-`manifest.json` and `frontend/roommind-panel.js`. GitHub's automatic source ZIP
-is not an installation asset because it lacks the generated panel. Restart HA.
+Alternatively, replace `/config/custom_components/roommind` with the contents of the release's **roommind.zip** and restart HA. The ZIP root contains `manifest.json` and `frontend/roommind-panel.js`. GitHub's automatic source ZIP lacks the generated panel and is not the installation asset.
 
-The panel URL includes the version to refresh its code after upgrades. If the
-normal browser still shows an older panel, try a private window or hard refresh.
-Check your rooms, schedules and sensor selections before enabling new control.
-
-## Set up schedules first
-
-Open **RoomMind → Schedules**, create or import Living Room, Downstairs and
-Bedrooms, review their weekly blocks, then assign rooms. You can save all three
-without room assignments first. See [the schedule guide](reusable-schedules.md).
-Keep the current AC device configuration while doing this.
-
-## Resume AC trials later
-
-- To continue radiator-only protection while Toshiba is independently controlled,
-  keep the AC out of controlled Devices and follow [cooling protection](cooling-interlock.md).
-- To return your bedroom Toshiba to RoomMind control, follow
-  [shared Toshiba setup and trial](shared-ac-control.md). Configure the full
-  outdoor-unit group first, but give RoomMind control of your bedroom AC only
-  for the first live trial. Keep the other ACs off initially.
+Declared minimum HA version is 2026.5.0. Simulator validation uses HA 2026.10.0.
 
 ## Roll back
 
-Before returning to beta 5, disable **Prepare morning targets before off-peak
-ends**. Beta 5 can resume using the old saved extra AC offset and does not apply
-the new early-stop margin or constant-schedule cooling handover. The peak heating
-lockout can remain enabled.
+Reinstall 1.8.0b1 in HACS (or restore its integration directory) and restart HA. The old reader can load the preserved legacy model layout but cannot use the separate AC/dehumidifier coefficients. Restore your pre-upgrade HA backup if you need the exact earlier learning/configuration.
 
-Before returning to beta 3 or earlier, restore **Home Assistant helpers / constant
-comfort** as the Schedule source in every room. Preserve a HA backup containing
-the new schedule library: older versions do not preserve it when writing storage.
+For much older releases, consult [the upstream 1.8 upgrade guide](upstream-1.8-update.md). In particular, beta 5 can resume its old +3°C morning bias, and beta 3 or earlier cannot preserve the reusable schedule library.
 
-Stop Toshiba cooling first. Remove ACs from controlled Devices before returning
-to beta 2, which does not coordinate shared requested modes. Keep Tado devices,
-external sensors and independent cooling monitors as appropriate.
+## Build a release
 
-Restore the exact code/panel directory saved before installation and restart HA,
-or reinstall your previous fork release through HACS. Restore the HA backup if
-configuration needs reversing too. Avoid unrelated household changes during the
-trial so a full backup restore does not discard them.
-
-## Building a release
-
-A release tag must point to the tested source commit, with the same version in
-`const.py` and `manifest.json`. Publish as a prerelease. GitHub Actions' **Release**
-workflow checks out the tag, builds the frontend and attaches `roommind.zip`.
-Wait for that workflow to succeed and verify the asset before installing through
-HACS. This avoids the cloud environment's direct-upload authentication failure.
+The release tag must point to the tested commit and match `const.py` and `manifest.json`. Publish as a prerelease. GitHub Actions' **Release** workflow builds the frontend and attaches **roommind.zip**. Wait for success and verify the asset against the tested package before installing through HACS.

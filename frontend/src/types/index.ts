@@ -112,6 +112,7 @@ export interface DeviceConfig {
   idle_action?: "off" | "fan_only" | "setback" | "low"; // default "off"
   idle_fan_mode?: string; // default "low"
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
+  energy_sensor?: string;
   setpoint_offset?: number; // °C added to the room target in direct mode, default 0
   coil_dry?: "inherit" | "on" | "off"; // default "inherit"
   coil_dry_minutes?: number; // 0 = inherit global
@@ -145,6 +146,10 @@ export interface RoomConfig {
   devices?: DeviceConfig[];
   temperature_sensor: string;
   humidity_sensor: string;
+  dehumidifier_power_sensor?: string;
+  dehumidifier_entity?: string;
+  dehumidifier_switch?: string;
+  preheat_max_minutes?: number;
   occupancy_sensors?: string[];
   occupancy_eco_enabled?: boolean;
   occupancy_eco_delay?: number;
@@ -200,6 +205,8 @@ export interface RoomConfig {
 }
 
 export interface GlobalSettings {
+  heat_pump_power_sensor?: string;
+  heat_pump_active_watts?: number;
   ac_tariff_enabled?: boolean;
   ac_off_peak_start?: string;
   ac_off_peak_end?: string;
@@ -342,6 +349,12 @@ export interface AnalyticsData {
     prediction_std_idle: number;
     prediction_std_heating: number;
     has_occupancy_sensors: boolean;
+    ac_heating_strength?: number;
+    radiator_heating_strength?: number;
+    source_layout?: string;
+    has_dehumidifier?: boolean;
+    n_ac_heating?: number;
+    dehumidifier_gain_per_kw?: number;
     solar_gain_now?: number;
     solar_gain_today_max?: number;
   };

@@ -12,6 +12,8 @@ import "../shared/rs-toggle-row";
 @customElement("rs-settings-sensors")
 export class RsSettingsSensors extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
+  @property({ type: String }) public heatPumpPowerSensor = "";
+  @property({ type: Number }) public heatPumpActiveWatts = 150;
   @property({ type: String }) public outdoorTempSensor = "";
   @property({ type: String }) public outdoorHumiditySensor = "";
   @property({ type: String }) public weatherEntity = "";
@@ -44,6 +46,29 @@ export class RsSettingsSensors extends RsSettingsBase {
     return html`
       <div class="settings-section first">
         <div class="sensor-grid">
+          <div class="sensor-field">
+            <ha-entity-picker
+              .hass=${this.hass}
+              .value=${this.heatPumpPowerSensor}
+              .includeDomains=${["sensor"]}
+              .label=${localize("learning.heat_pump_power", l)}
+              allow-custom-entity
+              @value-changed=${(e: CustomEvent) => this._fire("heatPumpPowerSensor", e.detail?.value ?? "")}
+            ></ha-entity-picker>
+            <p class="hint">${localize("learning.heat_pump_hint", l)}</p>
+            <ha-textfield
+              type="number"
+              min="10"
+              max="10000"
+              .label=${localize("learning.active_watts", l)}
+              .value=${String(this.heatPumpActiveWatts)}
+              @change=${(e: Event) => {
+                const v = Number((e.target as HTMLInputElement).value);
+                if (Number.isFinite(v) && v >= 10 && v <= 10000)
+                  this._fire("heatPumpActiveWatts", v);
+              }}
+            ></ha-textfield>
+          </div>
           <div class="sensor-field">
             <ha-entity-picker
               .hass=${this.hass}

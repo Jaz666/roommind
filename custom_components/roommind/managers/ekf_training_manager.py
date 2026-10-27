@@ -25,6 +25,8 @@ class EkfTrainingManager:
         # so the value at flush time would understate the batch.
         self._accumulated_rebound: dict[str, float] = {}
         self.last_temps: dict[str, float] = {}
+        self._sources: dict[str, str] = {}
+        self._aux: dict[str, float] = {}
 
     def set_model_manager(self, model_manager: RoomModelManager) -> None:
         """Update the model manager reference (used after full thermal reset)."""
@@ -47,6 +49,8 @@ class EkfTrainingManager:
         prev_mode = self._accumulated_mode.pop(area_id, None)
         pf = self._accumulated_pf.pop(area_id, 1.0)
         q_rebound = self._accumulated_rebound.pop(area_id, None)
+        source = self._sources.pop(area_id, "radiator")
+        auxiliary = self._aux.pop(area_id, 0.0)
         if accumulated > 0 and prev_mode is not None:
             self._model_manager.update(
                 area_id,
@@ -61,6 +65,8 @@ class EkfTrainingManager:
                 q_residual=q_residual,
                 q_occupancy=q_occupancy,
                 q_rebound=q_rebound,
+                heating_source=source,
+                dehumidifier_kw=auxiliary,
             )
 
     def process(
@@ -80,12 +86,23 @@ class EkfTrainingManager:
         dt_minutes: float,
         q_occupancy: float = 0.0,
         q_rebound: float | None = None,
+        heating_source: str = "radiator",
+        dehumidifier_kw: float = 0.0,
     ) -> None:
         """Process an EKF training step for a room.
 
         Contains the full training decision tree: window open, raw open
         (within delay), unobservable mode, or normal accumulation.
         """
+        source_changed = self._sources.get(area_id, heating_source) != heating_source
+        auxiliary_changed = abs(self._aux.get(area_id, dehumidifier_kw) - dehumidifier_kw) > 0.03
+        if source_changed or auxiliary_changed:
+            # The observation straddles a source/input change. Drop it rather than
+            # flushing the new temperature against the previous source's parameters.
+            self.clear(area_id)
+            self._model_manager.sync_temperature(area_id, current_temp)
+            self.last_temps[area_id] = current_temp
+            return
         if window_open or raw_open:
             self.flush(
                 area_id,
@@ -137,9 +154,13 @@ class EkfTrainingManager:
                     q_occupancy=q_occupancy,
                 )
 
+            self._sources[area_id] = heating_source
             old_dt = self._accumulated_dt.get(area_id, 0.0)
             new_dt = old_dt + dt_minutes
             if new_dt > 0:
+                self._aux[area_id] = (
+                    self._aux.get(area_id, dehumidifier_kw) * old_dt + dehumidifier_kw * dt_minutes
+                ) / new_dt
                 old_pf = self._accumulated_pf.get(area_id, 1.0)
                 self._accumulated_pf[area_id] = (old_pf * old_dt + ekf_pf * dt_minutes) / new_dt
                 if q_rebound is None:
@@ -166,6 +187,8 @@ class EkfTrainingManager:
                     q_residual=q_residual,
                     q_occupancy=q_occupancy,
                     q_rebound=batch_rebound,
+                    heating_source=heating_source,
+                    dehumidifier_kw=self._aux.get(area_id, 0.0),
                 )
                 self._accumulated_dt[area_id] = 0.0
 
@@ -173,6 +196,8 @@ class EkfTrainingManager:
 
     def clear(self, area_id: str) -> None:
         """Clear accumulated EKF state for a room."""
+        self._sources.pop(area_id, None)
+        self._aux.pop(area_id, None)
         self._accumulated_dt.pop(area_id, None)
         self._accumulated_mode.pop(area_id, None)
         self._accumulated_pf.pop(area_id, None)
