@@ -440,7 +440,9 @@ class TestOrchestratedParkedAc:
             active_sources="primary",
             reason="t",
         )
-        with patch("custom_components.roommind.coordinator.evaluate_heat_sources", side_effect=[both, trv_only]):
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources", side_effect=[both, both, trv_only, trv_only]
+        ):
             await coordinator._async_update_data()
             ac["state"] = _ac_state("heat", 24.0)
             hass.services.async_call.reset_mock()
@@ -482,7 +484,9 @@ class TestOrchestratedParkedAc:
             active_sources="primary",
             reason="t",
         )
-        with patch("custom_components.roommind.coordinator.evaluate_heat_sources", side_effect=[both, trv_only]):
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources", side_effect=[both, both, trv_only, trv_only]
+        ):
             await coordinator._async_update_data()
             hass.services.async_call.reset_mock()
             await coordinator._async_update_data()  # AC state still "off"

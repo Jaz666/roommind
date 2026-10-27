@@ -75,7 +75,7 @@ class TestHeatSourceOrchestration:
             data = await coordinator._async_update_data()
 
             # evaluate_heat_sources must have been called
-            mock_evaluate.assert_called_once()
+            mock_evaluate.assert_called()  # prediction preview and final command plan
             call_kwargs = mock_evaluate.call_args
             assert call_kwargs.kwargs["room_config"]["area_id"] == "living_room_abc12345"
             assert call_kwargs.kwargs["mode"] == "heating"

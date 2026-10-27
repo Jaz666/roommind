@@ -239,9 +239,10 @@ async def build_analytics_data(
         mgr = coordinator._model_manager
         if area_id in mgr._estimators:
             est = mgr._estimators[area_id]
-            rc = est.get_model()
+            selected_source = coordinator.rooms.get(area_id, {}).get("model_heating_source", "radiator")
+            rc = est.get_model(selected_source)
             pred_std_idle = est.prediction_std(0.0, 20.0, 15.0, 5.0)
-            pred_std_heat = est.prediction_std(rc.Q_heat, 20.0, 10.0, 5.0)
+            pred_std_heat = est.prediction_std(rc.Q_heat, 20.0, 10.0, 5.0, heating_source=selected_source)
             room_config = store.get_room(area_id) or {}
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
             if has_ext_sensor:
@@ -255,7 +256,13 @@ async def build_analytics_data(
                     if coordinator.outdoor_temp_effective is not None
                     else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 )
-                mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out, settings=settings)
+                mpc_active = (
+                    is_mpc_active(
+                        mgr, area_id, can_heat, can_cool, 20.0, T_out, settings=settings, heating_source=selected_source
+                    )
+                    and selected_source != "mixed"
+                    and coordinator.rooms.get(area_id, {}).get("dehumidifier_power_watts", 0) is not None
+                )
             else:
                 mpc_active = False
             # EKF uncertainty: sqrt(P[0][0]) as proxy for sigma_e
@@ -267,6 +274,12 @@ async def build_analytics_data(
                 "n_samples": est._n_updates,
                 "n_observations": est._n_updates,
                 "n_heating": est._n_heating,
+                "ac_heating_strength": est._x[7],
+                "radiator_heating_strength": est._x[2],
+                "source_layout": est._source_layout,
+                "has_dehumidifier": bool(room_config.get("dehumidifier_power_sensor")),
+                "n_ac_heating": est._n_ac_heating,
+                "dehumidifier_gain_per_kw": est._x[8],
                 "n_cooling": est._n_cooling,
                 "applicable_modes": sorted(est._applicable_modes),
                 "mpc_active": mpc_active,
@@ -320,7 +333,12 @@ async def build_analytics_data(
     if prediction_enabled and target_forecast and coordinator:
         mgr = coordinator._model_manager
         if area_id in mgr._estimators:
-            model = mgr.get_model(area_id)
+            live = coordinator.rooms.get(area_id, {})
+            model = mgr.get_model(
+                area_id,
+                live.get("model_heating_source", "radiator"),
+                (live.get("dehumidifier_power_watts") or 0.0) / 1000,
+            )
             est = mgr._estimators[area_id]
             all_points = detail if detail else history
             current_t: float | None = None
@@ -388,7 +406,10 @@ async def build_analytics_data(
                         window_open=coordinator._window_manager._paused.get(area_id, False),
                         mpc_active=mpc_active,
                         room_config=room_config,
-                        settings=settings,
+                        settings={**settings, "control_mode": "bangbang"}
+                        if live.get("model_heating_source") == "mixed"
+                        or live.get("dehumidifier_power_watts", 0) is None
+                        else settings,
                         all_points=all_points,
                         solar_series=solar_series,
                         acs_can_heat=check_acs_can_heat(hass, room_config),

@@ -214,7 +214,6 @@ class TestClimateControlDisabled:
             "thermostats": [],
             "acs": ["climate.living_room_ac"],
             "devices": [
-                {"entity_id": "climate.living_room", "type": "trv", "role": "auto", "heating_system_type": ""},
                 {"entity_id": "climate.living_room_ac", "type": "ac", "role": "auto", "heating_system_type": ""},
             ],
             "climate_mode": "cool_only",

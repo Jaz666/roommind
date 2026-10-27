@@ -51,7 +51,7 @@ def _closed_loop(
         ac_state.attributes = {"hvac_modes": ac_modes}
         hass.states.get = MagicMock(return_value=ac_state)
     manager = RoomModelManager()
-    monkeypatch.setattr(manager, "get_model", lambda _area: model)
+    monkeypatch.setattr(manager, "get_model", lambda _area, *_selection: model)
 
     prev = previous_mode
     on_since = START - elapsed_minutes * 60 if previous_mode != MODE_IDLE and elapsed_minutes is not None else None

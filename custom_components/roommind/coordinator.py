@@ -79,8 +79,9 @@ from .managers.cooling_interlock import CoolingInterlock
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.head_offset_tracker import HeadOffsetTracker
+from .managers.heat_source_observer import HeatSourceObserver
 from .managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan, evaluate_heat_sources
-from .managers.heating_tariff import HeatingTariffManager
+from .managers.heating_tariff import HeatingTariffManager, cheap_period
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import AcReboundTracker, ResidualHeatTracker
 from .managers.shared_ac_manager import SharedACManager
@@ -264,6 +265,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._climate_entity_areas: set[str] = set()
         # Per-entity cache of schedule blocks; fallback when schedule.get_schedule fails (#308)
         self._schedule_blocks_cache: dict[str, dict] = {}
+        self._source_observer = HeatSourceObserver()
         # Entity platform callbacks, set by platform async_setup_entry
         self.async_add_entities: Any = None
         self.async_add_switch_entities: Any = None
@@ -469,7 +471,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                                 3.0,
                             )
                         else:
-                            model = self._model_manager.get_model(area_id)
+                            model = self._model_manager.get_model(
+                                area_id,
+                                rs.get("model_heating_source", "radiator"),
+                                (rs.get("dehumidifier_power_watts") or 0.0) / 1000,
+                            )
                             hp = rs.get("heating_power", 100) / 100.0
                             Q = (
                                 hp * model.Q_heat
@@ -916,6 +922,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Keep the cooling handover, but do not boost using a cached reading.
             tariff.heating_paused = True
             self._heating_tariff.state[area_id]["heating_paused"] = True
+        room = {
+            **room,
+            "ac_cheap_heating_allowed": bool(
+                settings.get("ac_tariff_enabled") and cheap_period(settings, time.time())[0]
+            ),
+        }
         targets = tariff.targets_at(time.time(), targets)
 
         def tariff_resolver(ts: float) -> TargetTemps:
@@ -969,10 +981,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # unavailable/unknown/off → skip (conservative: no occupancy heat)
 
         # Determine and apply mode with MPC controller
-        control_room = room
+        cheap_heating = bool(settings.get("ac_tariff_enabled") and cheap_period(settings, time.time())[0])
+        control_room = {**room, "ac_cheap_heating_allowed": cheap_heating}
         if tariff.heating_locked or tariff.boost_target is not None:
             control_room = {
-                **room,
+                **control_room,
                 "devices": [
                     {**device, "idle_action": "off"}
                     if device.get("type") == "ac" and device.get("idle_action") not in ("off", "fan_only")
@@ -980,6 +993,64 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     for device in room.get("devices", [])
                 ],
             }
+        selected_source = "radiator"
+        if get_ac_eids(room.get("devices", [])) and (
+            not get_trv_eids(room.get("devices", []))
+            or (cheap_heating and room.get("climate_mode") == "heat_only")
+            or tariff.boost_target is not None
+            or (room.get("heat_source_orchestration") and self._heat_source_states.get(area_id) == "secondary")
+        ):
+            selected_source = "ac"
+        if selected_source == "ac" and get_trv_eids(room.get("devices", [])):
+            available = any(
+                (state := self.hass.states.get(eid)) is not None and state.state not in ("unavailable", "unknown")
+                for eid in get_ac_eids(room.get("devices", []))
+            )
+            if not available or (
+                self.outdoor_temp_effective is not None
+                and self.outdoor_temp_effective < room.get("heat_source_ac_min_outdoor", -15)
+            ):
+                selected_source = "radiator"
+        mixed_sources = bool(get_trv_eids(room.get("devices", [])) and get_ac_eids(room.get("devices", [])))
+        tariff_routes = (
+            tariff.heating_locked
+            or tariff.boost_target is not None
+            or (cheap_heating and room.get("climate_mode") == "heat_only")
+        )
+        if mixed_sources and not tariff_routes:
+            preview = (
+                evaluate_heat_sources(
+                    room_config=control_room,
+                    mode=MODE_HEATING,
+                    power_fraction=1.0,
+                    current_temp=current_temp,
+                    target_temp=targets.heat,
+                    outdoor_temp=self.outdoor_temp_effective,
+                    previous_active_sources=self._heat_source_states.get(area_id, "none"),
+                    hass=self.hass,
+                )
+                if room.get("heat_source_orchestration")
+                else None
+            )
+            if preview is None or preview.active_sources == "both":
+                selected_source = "mixed"
+            elif preview.active_sources == "secondary":
+                selected_source = "ac"
+            elif preview.active_sources == "primary":
+                selected_source = "radiator"
+        control_room["model_heating_source"] = selected_source
+        auxiliary_kw = self._source_observer.dehumidifier_kw(self.hass, room)
+        control_room["dehumidifier_kw"] = auxiliary_kw or 0.0
+        control_room["model_inputs_known"] = auxiliary_kw is not None and selected_source != "mixed"
+        # Labels describe the interval just measured, before this cycle sends any
+        # device commands. A synchronous HA service must not relabel old heat.
+        control_room["_thermal_inputs"] = self._source_observer.observe(self.hass, room, settings, None)
+        control_room["_observed_thermal_mode"] = self._source_observer.observed_modes.get(area_id)
+        room = control_room
+        self._model_manager.get_estimator(area_id).configure_sources(
+            bool(get_trv_eids(room.get("devices", [])) and get_ac_eids(room.get("devices", []))),
+            bool(get_ac_eids(room.get("devices", [])) and not get_trv_eids(room.get("devices", []))),
+        )
         controller = MPCController(
             self.hass,
             control_room,
@@ -1184,10 +1255,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 if (state := self.hass.states.get(eid)) is not None and state.state == "heat"
             )
         tariff_stop -= shared_members - shared_owned
-        tariff_excluded = (
-            set(get_ac_eids(room.get("devices", []))) if tariff.heating_locked and mode == MODE_HEATING else set()
-        )
-        if mode == MODE_HEATING and (tariff.heating_locked or tariff.boost_target is not None):
+        tariff_excluded: set[str] = set()
+        if mode == MODE_HEATING and (
+            tariff.heating_locked
+            or tariff.boost_target is not None
+            or (cheap_heating and room.get("climate_mode") == "heat_only")
+        ):
             trvs = [
                 eid
                 for eid in get_trv_eids(room.get("devices", []))
@@ -1200,13 +1273,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ]
             can_boost_ac = (
                 not tariff.heating_locked
-                and check_acs_can_heat(self.hass, room)
+                and check_acs_can_heat(self.hass, control_room)
                 and (
                     self.outdoor_temp_effective is None
                     or self.outdoor_temp_effective >= room.get("heat_source_ac_min_outdoor", -15)
                 )
             )
-            use_ac = bool(tariff.boost_target is not None and can_boost_ac and acs)
+            use_ac = bool((tariff.boost_target is not None or cheap_heating) and can_boost_ac and acs)
             commands = [
                 DeviceCommand(eid, "primary", "thermostat", not use_ac, power_fraction if not use_ac else 0.0, "tariff")
                 for eid in trvs
@@ -1222,7 +1295,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
             self._heat_source_states[area_id] = heat_source_plan.active_sources
 
-        ac_request = MODE_IDLE if mode == MODE_HEATING and ac_heating_excluded(room) else mode
+        ac_request = MODE_IDLE if mode == MODE_HEATING and ac_heating_excluded(control_room) else mode
         if heat_source_plan is not None and not any(
             cmd.active and cmd.device_type == "ac" for cmd in heat_source_plan.commands
         ):
@@ -1257,7 +1330,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         interlock_excluded: set[str] = set()
         if climate_active:
             for eid in tariff_stop:
-                await async_turn_off_climate(self.hass, eid, area_id=area_id)
+                await async_idle_device(
+                    self.hass,
+                    eid,
+                    room.get("devices", []),
+                    area_id=area_id,
+                    targets=targets,
+                    force_off=force_off
+                    or not any(
+                        d.get("entity_id") == eid and d.get("idle_action") == "fan_only"
+                        for d in room.get("devices", [])
+                    ),
+                )
         if mode != MODE_COOLING:
             tariff_excluded.update(tariff_stop)
         if cooling_block_reason is not None:
@@ -1385,7 +1469,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 compressor_forced_off.add(eid)
             if eid in decision.hold and eid not in compressor_forced_off:
                 compressor_forced_on.add(eid)
-        compressor_forced_off.update(tariff_excluded)
+        compressor_forced_off.update(
+            get_ac_eids(room.get("devices", [])) if tariff.heating_locked and mode == MODE_HEATING else tariff_excluded
+        )
         compressor_forced_off.update(tariff_stop)
         compressor_forced_on -= compressor_forced_off | tariff_stop
         relevant = set(get_ac_eids(room.get("devices", []))) if mode == MODE_COOLING else set(all_device_eids)
@@ -1551,7 +1637,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     if self.outdoor_temp_effective is not None
                     else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 )
-                mpc_active = is_mpc_active(
+                mpc_active = control_room["model_inputs_known"] and is_mpc_active(
                     self._model_manager,
                     area_id,
                     _ch,
@@ -1559,6 +1645,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     current_temp or 20.0,
                     _T_out,
                     settings=settings,
+                    heating_source=selected_source,
                 )
             except Exception:  # noqa: BLE001
                 mpc_active = False
@@ -1629,6 +1716,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             compressor_protection_until=compressor_protection_until,
             coil_dry=coil_dry,
         )
+        result["model_heating_source"] = selected_source
+        result["dehumidifier_power_watts"] = auxiliary_kw * 1000 if auxiliary_kw is not None else None
+        result["thermal_learning_source"] = control_room["_thermal_inputs"][0]
         result["ac_tariff_status"] = tariff.status
         result["ac_heating_locked"] = tariff.heating_locked
         result["ac_boost_target"] = tariff.boost_target
@@ -1785,8 +1875,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # cooling, so training that window as idle would drift alpha (spec 9.3).
         learning_disabled = settings.get("learning_disabled_rooms", [])
         learning_active = area_id not in learning_disabled
+        source_observation = room.get("_thermal_inputs")
+        if source_observation is None:
+            source_observation = self._source_observer.observe(self.hass, room, settings, ekf_mode)
+        observed_thermal_mode = room.get("_observed_thermal_mode", self._source_observer.observed_modes.get(area_id))
+        heating_source, dehumidifier_kw = source_observation
+        if heating_source is not None and observed_thermal_mode is not None:
+            ekf_mode = observed_thermal_mode
+            ekf_pf = 0.0 if ekf_mode == MODE_IDLE else 1.0
+        if heating_source is None or dehumidifier_kw is None:
+            self._ekf_training.clear(area_id)
+            if current_temp_raw is not None:
+                self._model_manager.sync_temperature(area_id, current_temp_raw)
+            ekf_mode = None
         if (
             learning_active
+            and heating_source is not None
+            and dehumidifier_kw is not None
             and not coil_dry_skip_training
             and hold_running is None
             and current_temp_raw is not None
@@ -1809,6 +1914,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 dt_minutes=UPDATE_INTERVAL / 60.0,
                 q_occupancy=q_occupancy,
                 q_rebound=q_rebound,
+                heating_source=heating_source,
+                dehumidifier_kw=dehumidifier_kw,
             )
         else:
             self._ekf_training.clear(area_id)
@@ -2730,7 +2837,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
     def reset_thermal_room(self, area_id: str) -> None:
         """Reset thermal model, EKF state, and residual tracking for one room."""
         self._model_manager.remove_room(area_id)
-        self._ekf_training.last_temps.pop(area_id, None)
+        self._ekf_training.remove_room(area_id)
         self._residual_tracker.clear_room(area_id)
 
     def reset_thermal_all(self) -> list[str]:
@@ -2792,21 +2899,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 continue
             commanded = rs.get("commanded_mode", rs.get("mode", MODE_IDLE))
 
-            # Orchestration filter (heating only): skip this room when its
-            # active heat sources don't include this group's device types.
-            if commanded == MODE_HEATING and ac_heating_excluded(room):
+            # Both orchestration and tariff routing can park an entire source.
+            # A cheap-rate AC request must never create demand on a boiler master.
+            source_filtered = room.get("heat_source_orchestration", False) or (
+                settings.get("ac_tariff_enabled") and rs.get("active_heat_sources") is not None
+            )
+            if commanded == MODE_HEATING and source_filtered:
+                if not room_contributes_to_group(room.get("devices", []), member_set, rs.get("active_heat_sources")):
+                    continue
+            elif commanded == MODE_HEATING and ac_heating_excluded(room):
                 if not room_contributes_to_group(room.get("devices", []), member_set, "primary"):
                     continue
-            elif (
-                commanded == MODE_HEATING
-                and room.get("heat_source_orchestration", False)
-                and not room_contributes_to_group(
-                    room.get("devices", []),
-                    member_set,
-                    rs.get("active_heat_sources"),
-                )
-            ):
-                continue
 
             modes.append(commanded)
         return modes
@@ -2880,8 +2983,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # ACs of heat only rooms with thermostats never run there (#476)
         sitting_out = {
             eid
-            for room in rooms_config.values()
+            for area_id, room in rooms_config.items()
             if ac_heating_excluded(room)
+            and room_states.get(area_id, {}).get("active_heat_sources") not in ("secondary", "both")
             for eid in get_ac_eids(room.get("devices", []))
         }
 

@@ -1530,6 +1530,7 @@ def _make_mock_estimator(**overrides):
     est = MagicMock()
     est._n_updates = overrides.get("n_updates", 200)
     est._n_idle = overrides.get("n_idle", 120)
+    est._n_ac_heating = 0
     est._n_heating = overrides.get("n_heating", 60)
     est._n_cooling = overrides.get("n_cooling", 20)
     est._applicable_modes = overrides.get("applicable_modes", {"idle", "heating"})
@@ -3310,3 +3311,43 @@ async def test_list_rooms_forwards_occupancy_vacant(ws_hass, store, connection):
 
     rooms = connection.send_result.call_args[0][1]["rooms"]
     assert rooms["office"]["live"]["occupancy_vacant"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sensor,reset", [("sensor.original", False), ("sensor.new_reference", True)])
+async def test_reference_sensor_change_resets_only_affected_model(ws_hass, store, connection, sensor, reset):
+    await store.async_load()
+    await store.async_save_room("living", {"temperature_sensor": "sensor.original"})
+    coordinator = MagicMock()
+    coordinator.async_room_added = AsyncMock()
+    coordinator._model_manager.to_dict.return_value = {"bedroom": {"preserved": True}}
+    ws_hass.data[DOMAIN]["coordinator"] = coordinator
+    await _save_room(
+        ws_hass, connection, {"id": 1, "type": "roommind/rooms/save", "area_id": "living", "temperature_sensor": sensor}
+    )
+    if reset:
+        coordinator.reset_thermal_room.assert_called_once_with("living")
+    else:
+        coordinator.reset_thermal_room.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_source_learning_configuration_round_trip(ws_hass, store, connection):
+    await store.async_load()
+    await _save_room(
+        ws_hass,
+        connection,
+        {
+            "id": 1,
+            "type": "roommind/rooms/save",
+            "area_id": "living",
+            "temperature_sensor": "sensor.room",
+            "dehumidifier_power_sensor": "sensor.dehum",
+            "preheat_max_minutes": 45,
+            "devices": [{"entity_id": "climate.ac", "type": "ac", "energy_sensor": "sensor.ac_energy"}],
+        },
+    )
+    room = store.get_room("living")
+    assert room["dehumidifier_power_sensor"] == "sensor.dehum"
+    assert room["devices"][0]["energy_sensor"] == "sensor.ac_energy"
+    assert room["preheat_max_minutes"] == 45

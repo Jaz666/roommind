@@ -92,7 +92,7 @@ def _clean_cache():
     clear_command_cache()
 
 
-def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
+def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float, preheat_minutes: int = 60):
     start = time.time()
 
     def resolve(ts: float) -> TargetTemps:
@@ -105,7 +105,7 @@ def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
     hass.states.get = MagicMock(return_value=state)
     ctrl = MPCController(
         hass,
-        make_room(climate_mode="heat_only", heating_system_type="radiator"),
+        make_room(climate_mode="heat_only", heating_system_type="radiator", preheat_max_minutes=preheat_minutes),
         model_manager=RoomModelManager(),
         outdoor_temp=0.0,
         settings={},
@@ -123,7 +123,7 @@ def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
 def test_guard_looks_as_far_ahead_as_the_preheat(monkeypatch):
     """Room above the eco target, comfort 90 min out: the 30-min guard would cancel the pre-heat."""
     plan = MPCPlan(actions=[MODE_HEATING] * 24, temperatures=[18.0] * 25, power_fractions=[1.0] * 24, preheat_blocks=18)
-    ctrl = _controller(monkeypatch, plan, 90 * 60)
+    ctrl = _controller(monkeypatch, plan, 90 * 60, preheat_minutes=120)
     assert ctrl._evaluate_mpc(18.0, TargetTemps(17.5, None))[0] == MODE_HEATING
 
 

@@ -168,7 +168,16 @@ async def test_group_member_without_external_sensor_is_not_commanded(hass, mock_
 async def test_roommind_owned_cooling_still_trains_thermal_model(hass, mock_config_entry):
     from unittest.mock import MagicMock
 
-    coordinator, _ = setup(hass, mock_config_entry)
+    coordinator, _ = setup(hass, mock_config_entry, states={B: "cool", BT: "off"})
+    original = hass.states.get
+
+    def observed(eid):
+        state = original(eid)
+        if eid == B:
+            state.attributes["hvac_action"] = "cooling"
+        return state
+
+    hass.states.get = observed
     coordinator._ekf_training.process = MagicMock()
     await update(coordinator)
     calls = coordinator._ekf_training.process.call_args_list
