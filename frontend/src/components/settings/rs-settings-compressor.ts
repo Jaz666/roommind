@@ -210,6 +210,27 @@ export class RsSettingsCompressor extends LitElement {
         ${
           group.shared_ac_control
             ? html`
+                <div class="field-row">
+                  <ha-select
+                    .label=${localize("shared_ac.heating_idle_mode", l)}
+                    .value=${group.heating_idle_mode ?? "off"}
+                    .options=${[
+                      { value: "off", label: localize("shared_ac.idle_off", l) },
+                      { value: "minimum_heat", label: localize("shared_ac.idle_minimum_heat", l) },
+                    ]}
+                    @selected=${(e: CustomEvent) => {
+                      const value = getSelectValue(e);
+                      if (value === "off" || value === "minimum_heat")
+                        this._updateGroup(idx, "heating_idle_mode", value);
+                    }}
+                  >
+                    <mwc-list-item value="off">${localize("shared_ac.idle_off", l)}</mwc-list-item>
+                    <mwc-list-item value="minimum_heat"
+                      >${localize("shared_ac.idle_minimum_heat", l)}</mwc-list-item
+                    >
+                  </ha-select>
+                  <div class="field-hint">${localize("shared_ac.heating_idle_hint", l)}</div>
+                </div>
                 <div class="section-label">${localize("shared_ac.night_members", l)}</div>
                 <div class="field-hint">${localize("shared_ac.night_hint", l)}</div>
                 ${group.members.map(

@@ -238,3 +238,56 @@ async def test_cooling_interlock_closes_a_direct_valve_hold(hass, mock_config_en
     if idle_action == "low":
         assert not any(c.get("hvac_mode") == "off" for c in calls(hass, BT))
         assert any(c.get("temperature") == 5 for c in calls(hass, BT))
+
+
+@pytest.mark.parametrize("policy,peer_mode", [("off", "off"), ("minimum_heat", "heat")])
+async def test_idle_peer_policy_precedes_heat_and_does_not_get_undone(hass, mock_config_entry, policy, peer_mode):
+    coordinator, store = setup(hass, mock_config_entry, states={B: "fan_only"})
+    store.get_settings.return_value["compressor_groups"][0]["heating_idle_mode"] = policy
+    room = store.get_rooms.return_value["bedroom"]
+    room.update(climate_mode="heat_only", comfort_heat=19, eco_heat=19)
+    room["devices"][1].update(idle_action="fan_only", idle_fan_mode="Quiet")
+    await update(coordinator, hour=12)
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    peer = calls(hass, B)
+    assert any(c.get("hvac_mode") == peer_mode for c in peer)
+    assert not any(c.get("hvac_mode") == "fan_only" for c in peer)
+    if policy == "minimum_heat":
+        assert any(c.get("temperature") == 16 for c in peer)
+    ordered = [c.args[2] for c in hass.services.async_call.call_args_list if c.args[0] == "climate"]
+    first_peer = next(i for i, c in enumerate(ordered) if c.get("entity_id") == B)
+    first_heat = next(i for i, c in enumerate(ordered) if c.get("entity_id") == A and c.get("hvac_mode") == "heat")
+    assert first_peer < first_heat
+
+
+async def test_minimum_heat_does_not_take_over_disabled_peer(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry, states={B: "fan_only"}, bedroom_enabled=False)
+    store.get_settings.return_value["compressor_groups"][0]["heating_idle_mode"] = "minimum_heat"
+    await update(coordinator, hour=12)
+    assert not calls(hass, B)
+
+
+async def test_idle_minimum_heat_is_restored_to_fan_when_other_heat_demand_ends(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    store.get_settings.return_value["compressor_groups"][0]["heating_idle_mode"] = "minimum_heat"
+    room = store.get_rooms.return_value["bedroom"]
+    room.update(climate_mode="heat_only", comfort_heat=19, eco_heat=19)
+    room["devices"][1].update(idle_action="fan_only", idle_fan_mode="Quiet")
+    await update(coordinator, hour=12)
+    # End the requesting room's heating override; all units report stopped after
+    # the direction/min-run handover. Normal idle fan settings should resume.
+    store.get_rooms.return_value["living"].update(comfort_heat=18, eco_heat=18)
+    base = hass.states.get
+
+    def reported(eid):
+        state = base(eid)
+        if eid in (A, B):
+            state.state = "heat"
+            state.attributes["temperature"] = 16 if eid == B else 24
+        return state
+
+    hass.states.get = reported
+    hass.services.async_call.reset_mock()
+    await update(coordinator, hour=12, now=2000)
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, B))
+    assert any(c.get("hvac_mode") == "fan_only" for c in calls(hass, B))
