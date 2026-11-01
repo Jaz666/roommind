@@ -149,3 +149,25 @@ changeover across a reload, gas fallback, radiator protection, inactive units,
 unavailable status and recovery, with a no-simultaneous-heating-and-cooling
 invariant over the entire run. Its exaggerated temperatures are policy stress
 tests, not household comfort targets.
+
+## Toshiba idle units during AC heating (1.8.0b3)
+
+Under **Settings → Compressor groups**, expand the shared outdoor-unit group and
+set **Idle units while another room needs AC heat**:
+
+- **Off** (default): turn idle, controlled units off before starting a requesting
+  unit. This avoids a Fan Only unit retaining Toshiba's apparent master role,
+  without intentionally warming idle rooms.
+- **Minimum Heat**: set idle, controlled units to Heat at each entity's reported
+  minimum setpoint. This may release a small amount of unwanted warmth.
+
+This applies whenever the shared group has permitted AC heating demand, including
+normal cheap-rate heating and morning boost. It does not bypass peak lockout,
+unknown/external-unit protection, open-window stops, or disabled room control.
+An invalid/missing minimum temperature falls back to Off. When heating demand ends,
+the normal per-device idle behaviour resumes subject to existing changeover and
+minimum-run protection. Minimum-heat peer intervals are excluded from room learning
+so leaked warmth is not mistaken for a room's requested heating response.
+
+The physical Toshiba master-selection behaviour is not reported by the integration;
+this setting coordinates compatible selected modes and still needs a household trial.

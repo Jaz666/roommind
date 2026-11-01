@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from ..control.mpc_controller import async_turn_off_climate
 from ..utils.device_utils import get_ac_eids
 
 
 @dataclass
 class SharedACDecision:
-    """A direction permission, never a request to start every indoor unit."""
+    """Group direction and compatible standby behaviour for idle indoor units."""
 
     action: str = "idle"
     reason: str = ""
     owned: set[str] = field(default_factory=set)
     stop: set[str] = field(default_factory=set)
     hold: set[str] = field(default_factory=set)
+    idle_peers: set[str] = field(default_factory=set)
+    idle_heat_mode: str = "off"
 
 
 class SharedACManager:
@@ -129,8 +133,40 @@ class SharedACManager:
                             previous.update(direction=desired, on_since=now, start_until=now + 90)
             decision.stop.update(urgent_stop & set(modes))
             decision.hold -= urgent_stop
+            # Fan-only peers can retain a Toshiba multi-split's master role.
+            # Only idle, owned rooms may be moved into the chosen heating standby.
+            if (
+                decision.action == "heat"
+                and any(mode == "heat" and eid not in urgent_stop for eid, mode in requests.items())
+                and decision.reason in ("", "awaiting_status")
+                and not previous.get("stopping")
+            ):
+                decision.idle_peers = owned - set(requests) - urgent_stop
+                decision.idle_heat_mode = group.get("heating_idle_mode", "off")
             for eid in members:
                 self.decisions[eid] = decision
+
+    async def async_prepare_idle_peers(self) -> None:
+        """Put idle peers in a compatible state before any requesting head starts."""
+        for eid, decision in self.decisions.items():
+            if eid not in decision.idle_peers:
+                continue
+            state = self.hass.states.get(eid)
+            minimum = state.attributes.get("min_temp") if state is not None else None
+            if (
+                decision.idle_heat_mode == "minimum_heat"
+                and isinstance(minimum, (int, float))
+                and math.isfinite(minimum)
+            ):
+                if state is not None and (state.state != "heat" or state.attributes.get("temperature") != minimum):
+                    await self.hass.services.async_call(
+                        "climate",
+                        "set_temperature",
+                        {"entity_id": eid, "hvac_mode": "heat", "temperature": minimum},
+                        blocking=True,
+                    )
+            else:
+                await async_turn_off_climate(self.hass, eid)
 
     def blocked(self, eid: str, mode: str) -> bool:
         """Whether this device may satisfy the room's requested direction."""

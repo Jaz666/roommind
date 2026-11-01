@@ -41,7 +41,14 @@ with sync_playwright() as pw:
           preheat.value='0';preheat.dispatchEvent(new Event('change'));
           if(!changes.some(e=>e.key==='preheat_max_minutes'&&e.value===0))throw Error('Zero preheat limit lost');
           if(!changes.some(e=>e.key==='dehumidifier_power_sensor'&&e.value==='sensor.dehum_power'))throw Error('Auxiliary input selection lost');
-          settings.remove();room.remove();
+          const compressor=document.createElement('rs-settings-compressor'),changes2=[];
+          compressor.hass=hass;compressor.compressorGroups=[{id:'toshiba',name:'Toshiba',members:['climate.ac'],shared_ac_control:true,min_run_minutes:5,min_off_minutes:5}];
+          compressor.addEventListener('setting-changed',e=>changes2.push(e.detail));document.body.append(compressor);await compressor.updateComplete;
+          const standby=[...compressor.shadowRoot.querySelectorAll('ha-select')].find(e=>(e.label??'').includes('Idle units'));
+          if(!standby||standby.value!=='off'||standby.options.length!==2)throw Error('Idle heating options missing');
+          standby.dispatchEvent(new CustomEvent('selected',{detail:{value:'minimum_heat'}}));
+          if(!changes2.some(e=>e.value?.[0]?.heating_idle_mode==='minimum_heat'))throw Error('Minimum Heat selection lost');
+          compressor.remove();settings.remove();room.remove();
         }""")
         assert not errors, errors
         print(f"Viewport {width}: CT input, dehumidifier input, zero predictive lead passed")

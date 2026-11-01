@@ -693,5 +693,9 @@
   "learning.preheat_hint": "0 disables predictive preheating. The separate cheap-rate morning boost remains available.",
   "learning.radiator_strength": "Radiator heating strength",
   "learning.ac_strength": "AC heating strength",
-  "learning.source_strength_hint": "Learned separately from confirmed single-source operation. A dash means this source is still learning."
+  "learning.source_strength_hint": "Learned separately from confirmed single-source operation. A dash means this source is still learning.",
+  "shared_ac.heating_idle_mode": "Idle units while another room needs AC heat",
+  "shared_ac.idle_off": "Off",
+  "shared_ac.idle_minimum_heat": "Minimum Heat",
+  "shared_ac.heating_idle_hint": "Off avoids extra warmth. Minimum Heat sets idle units to their lowest heating target and may release some heat. Normal idle behaviour returns when group heating demand ends. Peak-rate heating lockout still applies."
 }

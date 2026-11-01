@@ -851,6 +851,7 @@ async def websocket_get_settings(
                 vol.Optional("enforce_uniform_mode", default=False): bool,
                 vol.Optional("shared_ac_control", default=False): bool,
                 vol.Optional("night_cooling_members", default=[]): [str],
+                vol.Optional("heating_idle_mode", default="off"): vol.In(["off", "minimum_heat"]),
             }
         ],
     }

@@ -144,6 +144,7 @@ export interface CompressorGroup {
   action_script: string;
   enforce_uniform_mode: boolean;
   shared_ac_control?: boolean;
+  heating_idle_mode?: "off" | "minimum_heat";
   night_cooling_members?: string[];
 }
 

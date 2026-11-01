@@ -383,6 +383,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 stop = set().union(*(d.stop for d in self._shared_ac.decisions.values()))
                 for eid in sorted(stop):
                     await async_turn_off_climate(self.hass, eid)
+                await self._shared_ac.async_prepare_idle_peers()
                 for area_id, steps in pending.items():
                     try:
                         room_states[area_id] = await anext(steps)
@@ -1044,6 +1045,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         control_room["model_inputs_known"] = auxiliary_kw is not None and selected_source != "mixed"
         # Labels describe the interval just measured, before this cycle sends any
         # device commands. A synchronous HA service must not relabel old heat.
+        control_room["_minimum_heat_previous"] = any(
+            eid in self._shared_ac.decisions
+            and eid in self._shared_ac.decisions[eid].idle_peers
+            and self._shared_ac.decisions[eid].idle_heat_mode == "minimum_heat"
+            for eid in get_ac_eids(room.get("devices", []))
+        )
         control_room["_thermal_inputs"] = self._source_observer.observe(self.hass, room, settings, None)
         control_room["_observed_thermal_mode"] = self._source_observer.observed_modes.get(area_id)
         room = control_room
@@ -1327,6 +1334,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             for eid in shared_owned
             if eid in self._shared_ac.decisions and eid in self._shared_ac.decisions[eid].hold
         }
+        shared_idle_peers = {
+            eid
+            for eid in get_ac_eids(room.get("devices", []))
+            if eid in self._shared_ac.decisions and eid in self._shared_ac.decisions[eid].idle_peers
+        }
+        shared_minimum_heat = room.get("_minimum_heat_previous", False) or any(
+            self._shared_ac.decisions[eid].idle_heat_mode == "minimum_heat" for eid in shared_idle_peers
+        )
         interlock_excluded: set[str] = set()
         if climate_active:
             for eid in tariff_stop:
@@ -1507,7 +1522,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             commandable=climate_active and not waiting_for_data,
             compressor_forced_on=compressor_forced_on,
             compressor_forced_off=compressor_forced_off,
-            exclude_eids=cycling_eids | interlock_excluded | shared_blocked | shared_unowned | tariff_excluded,
+            exclude_eids=cycling_eids
+            | interlock_excluded
+            | shared_blocked
+            | shared_unowned
+            | tariff_excluded
+            | shared_idle_peers,
             force_off=force_off,
             can_activate=self._compressor_manager.check_can_activate,
         )
@@ -1548,7 +1568,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     | coil_dry.controlled_eids
                     | interlock_excluded
                     | shared_unowned
-                    | tariff_excluded,
+                    | tariff_excluded
+                    | shared_idle_peers,
                     heating_boost_target=device_max_temp,
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
@@ -1655,7 +1676,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             and shared_owned
             and not (set(protected_room.get("cooling_interlock_entities", [])) - shared_owned)
         )
-        if interlock_skip_training and current_temp_raw is not None:
+        if (interlock_skip_training or shared_minimum_heat) and current_temp_raw is not None:
             self._model_manager.sync_temperature(area_id, current_temp_raw)
 
         display_mode, display_pf = await self._observe_and_train(
@@ -1674,7 +1695,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             has_external_sensor=has_external_sensor,
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
-            coil_dry_skip_training=coil_dry.skip_ekf_training or interlock_skip_training,
+            coil_dry_skip_training=coil_dry.skip_ekf_training or interlock_skip_training or shared_minimum_heat,
             compressor_held=compressor_forced_on,
         )
 
