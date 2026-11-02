@@ -171,3 +171,10 @@ so leaked warmth is not mistaken for a room's requested heating response.
 
 The physical Toshiba master-selection behaviour is not reported by the integration;
 this setting coordinates compatible selected modes and still needs a household trial.
+
+### Toshiba mode commands (1.8.0b4)
+
+Minimum Heat sets the minimum target first, then explicitly selects Heat. Toshiba
+ignores the optional `hvac_mode` argument of a temperature-only service call; the
+separate mode command is required to leave Off or Fan Only. Already-correct units
+are not repeatedly commanded. Off policy and all existing lockouts are unchanged.
