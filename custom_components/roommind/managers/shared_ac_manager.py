@@ -158,11 +158,20 @@ class SharedACManager:
                 and isinstance(minimum, (int, float))
                 and math.isfinite(minimum)
             ):
-                if state is not None and (state.state != "heat" or state.attributes.get("temperature") != minimum):
+                if state is not None and state.attributes.get("temperature") != minimum:
+                    # Toshiba ignores hvac_mode in set_temperature. Set the low
+                    # target before enabling Heat, avoiding the old high target.
                     await self.hass.services.async_call(
                         "climate",
                         "set_temperature",
-                        {"entity_id": eid, "hvac_mode": "heat", "temperature": minimum},
+                        {"entity_id": eid, "temperature": minimum},
+                        blocking=True,
+                    )
+                if state is not None and state.state != "heat":
+                    await self.hass.services.async_call(
+                        "climate",
+                        "set_hvac_mode",
+                        {"entity_id": eid, "hvac_mode": "heat"},
                         blocking=True,
                     )
             else:

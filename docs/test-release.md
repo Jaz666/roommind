@@ -1,13 +1,13 @@
-# Household beta installation and rollback — 1.8.0b3
+# Household beta installation and rollback — 1.8.0b4
 
-This prerelease adds an **Off / Minimum Heat** policy for idle shared-AC units while another room needs AC heat. Configure it under **Settings → Compressor groups**; see [the shared AC guide](shared-ac-control.md#toshiba-idle-units-during-ac-heating-180b3). Source-aware learning and the cheap-rate controls from 1.8.0b2 are retained. Existing schedules, tariff settings and the shared Toshiba group are retained.
+This prerelease fixes Minimum Heat on Toshiba by sending a separate mode command after setting the low target. It includes the **Off / Minimum Heat** policy for idle shared-AC units while another room needs AC heat. Configure it under **Settings → Compressor groups**; see [the shared AC guide](shared-ac-control.md#toshiba-idle-units-during-ac-heating-180b3). Source-aware learning and the cheap-rate controls from 1.8.0b2 are retained. Existing schedules, tariff settings and the shared Toshiba group are retained.
 
 Read [the source-aware learning and setup guide](source-aware-learning.md), including its migration and measurement limitations. Upgrading from 1.8.0b2 retains existing learning. If upgrading from an older release, the source-aware learning migration described in that guide still applies.
 
 ## Install
 
 1. Make a Home Assistant backup and download it. Record your current version.
-2. In HACS, keep **Jaz666/roommind** as the one RoomMind repository. Select prerelease **1.8.0b3**, install, and restart HA. Do not delete the configured integration.
+2. In HACS, keep **Jaz666/roommind** as the one RoomMind repository. Select prerelease **1.8.0b4**, install, and restart HA. Do not delete the configured integration.
 3. Refresh the RoomMind panel. If the old frontend persists, use a hard refresh or private window.
 4. Follow [sensor setup](source-aware-learning.md#connect-this-households-sensors): whole-system CT, per-AC energy counters, and Living Room dehumidifier power. Installing the release does not silently configure these entities.
 5. Check each room's maximum predictive preheat time, AC idle action/fan speed, and Heat Only/Auto mode before the next cheap period.

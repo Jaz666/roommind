@@ -164,3 +164,35 @@ def test_window_or_force_off_bypasses_minimum_run_hold():
     item["stop_immediately"] = True
     decision = resolve(mgr, [item, prepare(B, "cooling")])
     assert decision.stop == {A} and not decision.hold
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial", ["off", "fan_only"])
+async def test_minimum_heat_explicitly_changes_mode_for_toshiba(initial):
+    """Toshiba's temperature setter does not implement the optional hvac_mode kwarg."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.roommind.managers.shared_ac_manager import SharedACDecision
+
+    state = MagicMock(state=initial, attributes={"min_temp": 17.0, "temperature": 30.0})
+    hass = MagicMock()
+    hass.states.get.return_value = state
+    calls = []
+
+    async def service(domain, name, data, **kwargs):
+        calls.append((name, dict(data)))
+        if name == "set_temperature":
+            state.attributes["temperature"] = data["temperature"]  # intentionally ignores hvac_mode
+        elif name == "set_hvac_mode":
+            assert state.attributes["temperature"] == 17.0
+            state.state = data["hvac_mode"]
+
+    hass.services.async_call = AsyncMock(side_effect=service)
+    mgr = SharedACManager(hass)
+    mgr.decisions[A] = SharedACDecision(action="heat", idle_peers={A}, idle_heat_mode="minimum_heat")
+    await mgr.async_prepare_idle_peers()
+    assert state.state == "heat"
+    assert state.attributes["temperature"] == 17.0
+    assert [name for name, data in calls] == ["set_temperature", "set_hvac_mode"]
+    await mgr.async_prepare_idle_peers()
+    assert len(calls) == 2  # no repeated commands once the unit reports the requested state
