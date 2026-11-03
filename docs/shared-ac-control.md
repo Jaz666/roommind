@@ -178,3 +178,5 @@ Minimum Heat sets the minimum target first, then explicitly selects Heat. Toshib
 ignores the optional `hvac_mode` argument of a temperature-only service call; the
 separate mode command is required to leave Off or Fan Only. Already-correct units
 are not repeatedly commanded. Off policy and all existing lockouts are unchanged.
+
+During morning boost, a room that reaches its target uses the group’s idle heating choice while another room still requests AC heat. Minimum Heat holds its indoor unit at its reported minimum heating setpoint; Off keeps it off. Its individual When idle setting resumes after shared heating ends. Reaching the boost target does not repeatedly switch the unit between Heat and Fan Only. Peak-rate lockout and explicit shutdown still take priority.
