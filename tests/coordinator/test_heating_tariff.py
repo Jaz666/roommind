@@ -329,3 +329,50 @@ async def test_prediction_selects_current_orchestrated_source(hass, mock_config_
     store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
     live = await tariff_update(coordinator, 12, 0)
     assert live["living"]["model_heating_source"] == expected
+
+
+@pytest.mark.parametrize("policy", ["minimum_heat", "off"])
+async def test_reached_boost_target_yields_to_shared_standby_without_fan_cycle(hass, mock_config_entry, policy):
+    """A satisfied head must not alternate urgent stops and shared standby."""
+    from unittest.mock import AsyncMock
+
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    settings = store.get_settings.return_value
+    settings["ac_morning_boost_rooms"] = ["living", "bedroom"]
+    settings["compressor_groups"][0]["heating_idle_mode"] = policy
+    bedroom = store.get_rooms.return_value["bedroom"]
+    bedroom["climate_mode"] = "heat_only"
+    bedroom["devices"][1].update(idle_action="fan_only", idle_fan_mode="Quiet")
+    base = hass.states.get
+    states = {eid: base(eid) for eid in (A, B, T, BT, "sensor.bedroom_temp")}
+    states["sensor.bedroom_temp"].state = "18"
+    hass.states.get = lambda eid: states[eid] if eid in states else base(eid)
+
+    async def apply(domain, service, data, **kwargs):
+        state = states.get(data.get("entity_id"))
+        if domain != "climate" or state is None:
+            return
+        if service == "set_hvac_mode":
+            state.state = data["hvac_mode"]
+        elif service == "set_temperature":
+            state.attributes["temperature"] = data["temperature"]
+
+    hass.services.async_call = AsyncMock(side_effect=apply)
+    await tariff_update(coordinator, 4, 40)
+    assert states[A].state == states[B].state == "heat"
+    states["sensor.bedroom_temp"].state = "19"
+    for minute in (45, 46, 47):
+        hass.services.async_call.reset_mock()
+        await tariff_update(coordinator, 4, minute)
+        assert states[A].state == "heat"
+        assert states[B].state == ("heat" if policy == "minimum_heat" else "off")
+        assert not any(c.get("hvac_mode") == "fan_only" for c in calls(hass, B))
+        if policy == "minimum_heat":
+            assert states[B].attributes["temperature"] == 16
+
+    # Cheap-rate cutoff must still stop both heating heads.
+    hass.services.async_call.reset_mock()
+    await tariff_update(coordinator, 5)
+    assert states[A].state != "heat" and states[B].state != "heat"
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, B))

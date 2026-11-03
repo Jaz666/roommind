@@ -1254,14 +1254,19 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         }
         # Group members without a usable external sensor remain unowned.
         tariff_stop -= shared_members - shared_owned
-        boost_reached = tariff.heating_paused
-        if boost_reached:
-            tariff_stop.update(
+        # A reached boost target ends this room's demand, but can still allow
+        # shared-group standby while a different room needs AC heat. Do not
+        # classify that as a hard stop before group arbitration.
+        boost_stop = (
+            {
                 eid
                 for eid in get_ac_eids(room.get("devices", []))
                 if (state := self.hass.states.get(eid)) is not None and state.state == "heat"
-            )
-        tariff_stop -= shared_members - shared_owned
+            }
+            - (shared_members - shared_owned)
+            if tariff.heating_paused
+            else set()
+        )
         tariff_excluded: set[str] = set()
         if mode == MODE_HEATING and (
             tariff.heating_locked
@@ -1342,6 +1347,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         shared_minimum_heat = room.get("_minimum_heat_previous", False) or any(
             self._shared_ac.decisions[eid].idle_heat_mode == "minimum_heat" for eid in shared_idle_peers
         )
+        # Group standby owns idle peers. Everyone else must stop at the boost
+        # target even during a compressor minimum-run hold. Peak/window/user
+        # stops still outrank standby through the group's urgent-stop set.
+        tariff_stop.update(boost_stop - shared_idle_peers)
         interlock_excluded: set[str] = set()
         if climate_active:
             for eid in tariff_stop:
