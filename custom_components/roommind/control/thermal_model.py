@@ -674,11 +674,6 @@ class ThermalEKF:
         else:
             self._n_idle += 1
 
-    def sync_temperature(self, T_measured: float) -> None:
-        """Set the temperature state to a measurement without learning from the jump."""
-        self._x[0] = T_measured
-        self._initialized = True
-
     def configure_sources(self, mixed: bool, ac_only: bool) -> None:
         """Migrate old room models once; preserve room physics and single-source learning."""
         layout = "mixed" if mixed else "ac" if ac_only else "radiator"
@@ -1262,10 +1257,6 @@ class RoomModelManager:
         """Return total number of EKF updates for *area_id*."""
         est = self._estimators.get(area_id)
         return est._n_updates if est else 0
-
-    def sync_temperature(self, area_id: str, T_measured: float) -> None:
-        """Set *area_id*'s temperature state to a measurement, keeping its parameters."""
-        self.get_estimator(area_id).sync_temperature(T_measured)
 
     def update_window_open(
         self,

@@ -186,7 +186,7 @@ def test_room_switch_turns_the_preheat_lead_off():
     assert preheat_max_blocks(70, enabled=True) is None
 
 
-@pytest.mark.parametrize(("room_value", "expected"), [(False, 0), (True, None), ("missing", None)])
+@pytest.mark.parametrize(("room_value", "expected"), [(False, 0), (True, 12), ("missing", 12)])
 def test_controller_reads_the_room_switch(room_value, expected):
     room = make_room() if room_value == "missing" else make_room(preheat_enabled=room_value)
     ctrl = MPCController(

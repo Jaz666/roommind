@@ -36,6 +36,7 @@ from .services.analytics_service import (
     _safe_float,  # noqa: F401 - re-exported for tests
     build_analytics_data,
 )
+from .utils.area_utils import REST_SWITCHED_OFF
 from .utils.device_utils import (
     COIL_DRY_INHERIT,
     COIL_DRY_MODE_FAN_ONLY,
@@ -48,6 +49,7 @@ from .utils.device_utils import (
     DEFAULT_COIL_DRY_MINUTES,
     SETPOINT_OFFSET_MAX,
     SETPOINT_OFFSET_MIN,
+    ValveEntities,
     get_valve_entities,
 )
 from .utils.reusable_schedule import import_helper_blocks, schedule_summary, validate_schedule
@@ -571,19 +573,30 @@ async def websocket_save_room(
 async def _async_release_dropped_valves(
     hass: HomeAssistant,
     area_id: str,
-    old: dict[str, tuple[str, str]],
-    new: dict[str, tuple[str, str]],
+    old: dict[str, ValveEntities],
+    new: dict[str, ValveEntities],
 ) -> None:
     """Hand valves RoomMind no longer controls back to their TRVs (#413).
 
     Nobody else would: without the config RoomMind does not know these number
     entities any more, and the valve would stay pinned where it was last set.
     """
-    for climate_eid, (opening, closing) in old.items():
-        if new.get(climate_eid) == (opening, closing):
+    for climate_eid, valve in old.items():
+        updated = new.get(climate_eid)
+        if updated and (updated.opening, updated.closing) == (valve.opening, valve.closing):
+            # A closing-mode change is applied by the next control cycle, not
+            # by releasing with the old idle semantics during config save.
             continue
         try:
-            await async_release_valve(hass, climate_eid, opening, closing, area_id=area_id, hand_back=True)
+            await async_release_valve(
+                hass,
+                climate_eid,
+                valve.opening,
+                valve.closing,
+                area_id=area_id,
+                hand_back=True,
+                idle_opening=valve.idle_opening,
+            )
         except Exception:  # noqa: BLE001
             _LOGGER.warning("Room '%s': releasing the valve of '%s' failed", area_id, climate_eid, exc_info=True)
 
@@ -623,8 +636,46 @@ async def websocket_delete_room(
     coordinator = _get_coordinator(hass)
     if coordinator:
         await coordinator.async_room_removed(area_id)
+    # Persist the model removal immediately so stale learned state cannot return
+    # on the next thermal-data save.
+    await store.async_clear_thermal_data_room(area_id)
 
     connection.send_result(msg["id"], {"success": True})
+
+
+async def async_remove_room(hass: HomeAssistant, area_id: str) -> bool:
+    """Remove a room and its learned state, returning false when absent."""
+    store = hass.data[DOMAIN]["store"]
+    old_valves = get_valve_entities((store.get_room(area_id) or {}).get("devices", []))
+    try:
+        await store.async_delete_room(area_id)
+    except KeyError:
+        return False
+    await _async_release_dropped_valves(hass, area_id, old_valves, {})
+    coordinator = _get_coordinator(hass)
+    if coordinator:
+        await coordinator.async_room_removed(area_id)
+    await store.async_clear_thermal_data_room(area_id)
+    return True
+
+
+async def async_pause_room(hass: HomeAssistant, area_id: str) -> None:
+    """Stop a room whose area was deleted while preserving its configuration."""
+    coordinator = _get_coordinator(hass)
+    if hass.data[DOMAIN]["store"].get_room(area_id) is not None and coordinator:
+        await coordinator.async_room_paused(area_id)
+
+
+async def async_resume_room(hass: HomeAssistant, area_id: str) -> None:
+    """Resume a resting room when its area returns."""
+    store = hass.data[DOMAIN]["store"]
+    room = store.get_room(area_id)
+    if room is None:
+        return
+    await store.async_update_room(area_id, {REST_SWITCHED_OFF: False})
+    coordinator = _get_coordinator(hass)
+    if coordinator:
+        await coordinator.async_room_added(store.get_room(area_id))
 
 
 # ---------------------------------------------------------------------------

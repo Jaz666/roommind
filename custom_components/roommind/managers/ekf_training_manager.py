@@ -153,6 +153,8 @@ class EkfTrainingManager:
             self._model_manager.sync_temperature(area_id, current_temp)
             self._synced.add(area_id)
             self._current.add(area_id)
+            self._sources[area_id] = heating_source
+            self._aux[area_id] = dehumidifier_kw
         else:
             self._current.add(area_id)
             prev_mode = self._accumulated_mode.get(area_id)
