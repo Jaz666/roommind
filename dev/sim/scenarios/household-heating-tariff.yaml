@@ -1,0 +1,185 @@
+name: household-heating-tariff
+description: Fixed GMT cutoff stops AC heat despite minimum run, preserves morning
+  cooling band through reload, overrides use gas and cooling remains allowed.
+tags:
+- smoke
+- household
+- tariff
+- ac
+start: 2026-07-01T05:20
+duration: 110m
+location:
+  latitude: 51.5
+  longitude: -0.1
+  time_zone: Europe/London
+weather:
+  profile: temperate
+  monthly_mean_c:
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  - 18
+  daily_amplitude_c:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  noise_c: 0
+house:
+  building: bestand_teilsaniert
+  outdoor:
+    sensors:
+      temperature: sensor.outdoor
+  rooms:
+    bedroom:
+      floor_area_m2: 1000
+      initial:
+        temperature: 19
+      devices:
+      - entity_id: climate.bedroom_ac
+        profile: generic_split_ac
+      - entity_id: climate.bedroom_trv
+        profile: generic_trv
+      sensors:
+        temperature:
+          entity_id: sensor.bedroom_temp
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor
+    control_mode: bangbang
+    compressor_groups:
+    - id: bedroom
+      name: Bedroom outdoor unit
+      members:
+      - climate.bedroom_ac
+      min_run_minutes: 60
+      min_off_minutes: 1
+      shared_ac_control: true
+      night_cooling_members:
+      - climate.bedroom_ac
+    ac_tariff_enabled: true
+    ac_off_peak_start: 00:00
+    ac_off_peak_end: 05:00
+    ac_morning_boost_enabled: true
+    ac_morning_boost_minutes: 30
+    ac_morning_boost_offset: 3
+    ac_morning_boost_rooms: []
+  rooms:
+    bedroom:
+      devices:
+      - entity_id: climate.bedroom_ac
+        type: ac
+        setpoint_mode: direct
+      - entity_id: climate.bedroom_trv
+        type: trv
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: auto
+      comfort_heat: 19
+      comfort_cool: 19.5
+      eco_heat: 19
+      eco_cool: 19.5
+timeline:
+- at: +1m
+  do: roommind.ws
+  type: roommind/schedules/save
+  name: Morning
+  revision: 0
+  area_ids:
+  - bedroom
+  days:
+    monday: &id001
+    - from: 00:00
+      to: 07:00
+      data:
+        heat_temperature: 19
+        cool_temperature: 19.5
+    - from: 07:00
+      to: '22:00'
+      data:
+        heat_temperature: 20
+        cool_temperature: 20.5
+    - from: '22:00'
+      to: '24:00'
+      data:
+        heat_temperature: 19
+        cool_temperature: 19.5
+    tuesday: *id001
+    wednesday: *id001
+    thursday: *id001
+    friday: *id001
+    saturday: *id001
+    sunday: *id001
+- at: +2m
+  do: roommind.ws
+  type: roommind/settings/save
+  ac_morning_boost_rooms:
+  - bedroom
+- at: +41m
+  do: roommind.reload
+- at: +60m
+  do: roommind.ws
+  type: roommind/override/set
+  area_id: bedroom
+  override_type: custom
+  heat: 22
+  cool: 23
+  duration: 0.08
+- at: +75m
+  do: roommind.ws
+  type: roommind/override/set
+  area_id: bedroom
+  override_type: custom
+  heat: 16
+  cool: 17
+  duration: 0.08
+expect:
+- invariant: no_heat_and_cool_same_group
+- check: room.bedroom.heat_target == 19
+  at: +5m
+  label: Night target before boost window
+- check: room.bedroom.heat_target == 20
+  at: +15m
+  label: Next local morning target prepared during cheap rate
+- check: dev('climate.bedroom_ac').mode == 'heat'
+  at: +15m
+  label: AC heats during final cheap minutes
+- check: room.bedroom.heat_target == 19
+  at: +45m
+  label: Heating returns to night target at cutoff through reload
+- check: room.bedroom.cool_target == 20.5
+  at: +45m
+  label: Prepared warmth not cooled away after reload
+- check: dev('climate.bedroom_ac').mode == 'off'
+  at: +45m
+  label: Cutoff beats sixty minute minimum run
+- check: dev('climate.bedroom_ac').mode == 'off'
+  at: +61m
+  label: Heating override cannot bypass peak lockout
+- check: dev('climate.bedroom_trv').mode == 'heat'
+  at: +61m
+  label: Heating override uses gas
+- check: dev('climate.bedroom_ac').mode == 'cool'
+  at: +76m
+  label: Peak cooling override remains available
+- check: dev('climate.bedroom_trv').mode == 'off'
+  at: +76m
+  label: Peak cooling still protects radiator
+- check: room.bedroom.heat_target == 20
+  at: +105m
+  label: Morning schedule returns normally

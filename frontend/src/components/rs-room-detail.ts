@@ -7,6 +7,7 @@ import type {
   RoomConfig,
   ClimateMode,
   ScheduleEntry,
+  ScheduleChoice,
   CoverScheduleEntry,
   DeviceConfig,
   DeviceType,
@@ -15,6 +16,7 @@ import type {
 import "./rs-hero-status";
 import "./rs-climate-mode-selector";
 import "./rs-schedule-settings";
+import "./rs-schedule-link";
 import "./rs-device-section";
 import "./rs-sensor-section";
 import "./rs-section-card";
@@ -42,12 +44,12 @@ export class RsRoomDetail extends LitElement {
   @property({ attribute: false }) public area!: HassArea;
   @property({ attribute: false }) public config: RoomConfig | null = null;
   @property({ attribute: false }) public hass!: HomeAssistant;
+  @property({ attribute: false }) public scheduleChoices: ScheduleChoice[] = [];
   @property({ type: Boolean }) public presenceEnabled = false;
   @property({ attribute: false }) public presencePersons: string[] = [];
   @property({ type: Boolean }) public climateControlActive = true;
 
   @property({ type: Boolean }) public valveProtectionEnabled = false;
-  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   @property({ type: Boolean }) public coilDryEnabled = false;
   @property({ type: Number }) public coilDryMinutes = 20;
   @property({ type: String }) public coilDryMode = "fan_only";
@@ -58,7 +60,6 @@ export class RsRoomDetail extends LitElement {
   @state() private _selectedHumiditySensor = "";
   @state() private _selectedOccupancySensors: Set<string> = new Set();
   @state() private _occupancyEcoEnabled = false;
-  @state() private _preheatEnabled = true;
   @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @state() private _selectedWindowSensors: Set<string> = new Set();
   @state() private _windowOpenDelay = 0;
@@ -95,6 +96,9 @@ export class RsRoomDetail extends LitElement {
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
   @state() private _heatSourceOrchestration = false;
+  @state() private _coolingInterlockEntities: string[] = [];
+  @state() private _coolingInterlockDelay = 300;
+  @state() private _coolingInterlockDeadband = 0.3;
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
@@ -267,7 +271,6 @@ export class RsRoomDetail extends LitElement {
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
       this._selectedOccupancySensors = new Set(this.config.occupancy_sensors ?? []);
       this._occupancyEcoEnabled = this.config.occupancy_eco_enabled ?? false;
-      this._preheatEnabled = this.config.preheat_enabled ?? true;
       this._occupancyEcoDelay = this.config.occupancy_eco_delay ?? DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set(this.config.window_sensors ?? []);
       this._windowOpenDelay = this.config.window_open_delay ?? 0;
@@ -301,6 +304,9 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
+      this._coolingInterlockEntities = [...(this.config.cooling_interlock_entities ?? [])];
+      this._coolingInterlockDelay = this.config.cooling_interlock_delay ?? 300;
+      this._coolingInterlockDeadband = this.config.cooling_interlock_deadband ?? 0.3;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
       this._heatSourceAcMinOutdoor = this.config.heat_source_ac_min_outdoor ?? -15.0;
@@ -310,7 +316,6 @@ export class RsRoomDetail extends LitElement {
       this._selectedHumiditySensor = "";
       this._selectedOccupancySensors = new Set();
       this._occupancyEcoEnabled = false;
-      this._preheatEnabled = true;
       this._occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set();
       this._windowOpenDelay = 0;
@@ -439,32 +444,133 @@ export class RsRoomDetail extends LitElement {
                   </rs-section-card>
 
                   <rs-section-card
+                    icon="mdi:snowflake-alert"
+                    .heading=${localize("interlock.title", this.hass.language)}
+                  >
+                    <p>${localize("interlock.description", this.hass.language)}</p>
+                    ${this._coolingInterlockEntities.map(
+                      (eid) => html`
+                        <p>
+                          ${this.hass.states[eid]?.attributes.friendly_name ?? eid}
+                          <button
+                            @click=${() => {
+                              this._coolingInterlockEntities =
+                                this._coolingInterlockEntities.filter((value) => value !== eid);
+                              this._autoSave();
+                            }}
+                          >
+                            ${localize("interlock.remove", this.hass.language)}
+                          </button>
+                        </p>
+                      `,
+                    )}
+                    <ha-entity-picker
+                      .hass=${this.hass}
+                      .includeDomains=${["climate"]}
+                      .value=${""}
+                      .label=${localize("interlock.add", this.hass.language)}
+                      @value-changed=${(event: CustomEvent<{ value: string }>) => {
+                        const eid = event.detail.value;
+                        if (eid && !this._coolingInterlockEntities.includes(eid)) {
+                          this._coolingInterlockEntities = [...this._coolingInterlockEntities, eid];
+                          this._autoSave();
+                        }
+                      }}
+                    ></ha-entity-picker>
+                    ${
+                      this._coolingInterlockEntities.length
+                        ? html`
+                            <p>
+                              <label>
+                                ${localize("interlock.delay", this.hass.language)}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="60"
+                                  step="1"
+                                  .value=${String(this._coolingInterlockDelay / 60)}
+                                  @change=${(event: Event) => {
+                                    const input = event.target as HTMLInputElement;
+                                    if (input.value && input.checkValidity()) {
+                                      this._coolingInterlockDelay = Number(input.value) * 60;
+                                      this._autoSave();
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </p>
+                            <p>
+                              <label>
+                                ${localize("interlock.deadband", this.hass.language)}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="2"
+                                  step="0.1"
+                                  .value=${String(this._coolingInterlockDeadband)}
+                                  @change=${(event: Event) => {
+                                    const input = event.target as HTMLInputElement;
+                                    if (input.value && input.checkValidity()) {
+                                      this._coolingInterlockDeadband = Number(input.value);
+                                      this._autoSave();
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </p>
+                          `
+                        : nothing
+                    }
+                    ${
+                      this.config?.live?.heating_blocked_by_cooling
+                        ? html`<p role="status">
+                            ${localize(
+                              this.config.live.cooling_interlock_reason === "cooling"
+                                ? "interlock.cooling"
+                                : this.config.live.cooling_interlock_reason === "recovery"
+                                  ? "interlock.recovery"
+                                  : "interlock.unknown",
+                              this.hass.language,
+                            )}
+                          </p>`
+                        : nothing
+                    }
+                  </rs-section-card>
+
+                  <rs-section-card
                     icon="mdi:calendar"
                     .heading=${localize("room.section.schedule", this.hass.language)}
                     editable
                     @edit-click=${this._openEdit("schedule")}
                   >
-                    <rs-schedule-settings
+                    <rs-schedule-link
                       .hass=${this.hass}
-                      .schedules=${this._schedules}
-                      .scheduleSelectorEntity=${this._scheduleSelectorEntity}
-                      .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
-                      .comfortHeat=${this._comfortHeat}
-                      .comfortCool=${this._comfortCool}
-                      .ecoHeat=${this._ecoHeat}
-                      .ecoCool=${this._ecoCool}
-                      .climateMode=${this._climateMode}
-                      .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
-                      .preheatEnabled=${this._preheatEnabled}
-                      .showPreheat=${this._showPreheat()}
-                      .editing=${false}
-                      @schedules-changed=${this._onSchedulesChanged}
-                      @schedule-selector-changed=${this._onScheduleSelectorChanged}
-                      @comfort-heat-changed=${this._onComfortHeatChanged}
-                      @comfort-cool-changed=${this._onComfortCoolChanged}
-                      @eco-heat-changed=${this._onEcoHeatChanged}
-                      @eco-cool-changed=${this._onEcoCoolChanged}
-                    ></rs-schedule-settings>
+                      .config=${this.config}
+                      .choices=${this.scheduleChoices}
+                    ></rs-schedule-link>
+                    ${
+                      !this.config?.roommind_schedule_id
+                        ? html`<rs-schedule-settings
+                            .hass=${this.hass}
+                            .schedules=${this._schedules}
+                            .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+                            .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+                            .comfortHeat=${this._comfortHeat}
+                            .comfortCool=${this._comfortCool}
+                            .ecoHeat=${this._ecoHeat}
+                            .ecoCool=${this._ecoCool}
+                            .climateMode=${this._climateMode}
+                            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+                            .editing=${false}
+                            @schedules-changed=${this._onSchedulesChanged}
+                            @schedule-selector-changed=${this._onScheduleSelectorChanged}
+                            @comfort-heat-changed=${this._onComfortHeatChanged}
+                            @comfort-cool-changed=${this._onComfortCoolChanged}
+                            @eco-heat-changed=${this._onEcoHeatChanged}
+                            @eco-cool-changed=${this._onEcoCoolChanged}
+                          ></rs-schedule-settings>`
+                        : nothing
+                    }
                     ${
                       this.config
                         ? html`
@@ -709,28 +815,35 @@ export class RsRoomDetail extends LitElement {
             </p>
             <p>${unsafeHTML(localize("schedule.help_multi", lang))}</p>
           </div>
-          <rs-schedule-settings
+          <rs-schedule-link
             .hass=${this.hass}
-            .schedules=${this._schedules}
-            .scheduleSelectorEntity=${this._scheduleSelectorEntity}
-            .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
-            .comfortHeat=${this._comfortHeat}
-            .comfortCool=${this._comfortCool}
-            .ecoHeat=${this._ecoHeat}
-            .ecoCool=${this._ecoCool}
-            .climateMode=${this._climateMode}
-            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
-            .preheatEnabled=${this._preheatEnabled}
-            .showPreheat=${this._showPreheat()}
+            .config=${this.config}
+            .choices=${this.scheduleChoices}
             .editing=${true}
-            @schedules-changed=${this._onSchedulesChanged}
-            @schedule-selector-changed=${this._onScheduleSelectorChanged}
-            @comfort-heat-changed=${this._onComfortHeatChanged}
-            @comfort-cool-changed=${this._onComfortCoolChanged}
-            @eco-heat-changed=${this._onEcoHeatChanged}
-            @eco-cool-changed=${this._onEcoCoolChanged}
-            @preheat-changed=${this._onPreheatChanged}
-          ></rs-schedule-settings>
+          ></rs-schedule-link>
+          ${
+            !this.config?.roommind_schedule_id
+              ? html`<rs-schedule-settings
+                  .hass=${this.hass}
+                  .schedules=${this._schedules}
+                  .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+                  .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+                  .comfortHeat=${this._comfortHeat}
+                  .comfortCool=${this._comfortCool}
+                  .ecoHeat=${this._ecoHeat}
+                  .ecoCool=${this._ecoCool}
+                  .climateMode=${this._climateMode}
+                  .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+                  .editing=${true}
+                  @schedules-changed=${this._onSchedulesChanged}
+                  @schedule-selector-changed=${this._onScheduleSelectorChanged}
+                  @comfort-heat-changed=${this._onComfortHeatChanged}
+                  @comfort-cool-changed=${this._onComfortCoolChanged}
+                  @eco-heat-changed=${this._onEcoHeatChanged}
+                  @eco-cool-changed=${this._onEcoCoolChanged}
+                ></rs-schedule-settings>`
+              : nothing
+          }
         </rs-edit-dialog>`;
       case "devices":
         return html`<rs-edit-dialog
@@ -950,27 +1063,6 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  /**
-   * Only where the pre-heat lead applies: MPC with a room sensor, not cool_only. Underfloor
-   * heating pre-heats through its own control, unless an orchestrated AC heats the room.
-   */
-  private _showPreheat(): boolean {
-    if (
-      this.controlMode !== "mpc" ||
-      !this._selectedTempSensor ||
-      this._climateMode === "cool_only"
-    ) {
-      return false;
-    }
-    const acHeats = this._heatSourceOrchestration && this._devices.some((d) => d.type === "ac");
-    return resolveHeatingSystemType(this._devices) !== "underfloor" || acHeats;
-  }
-
-  private _onPreheatChanged(e: CustomEvent<{ value: boolean }>) {
-    this._preheatEnabled = e.detail.value;
-    this._autoSave();
-  }
-
   private _onEcoCoolChanged(e: CustomEvent<{ value: number }>) {
     this._ecoCool = e.detail.value;
     if (this._ecoHeat > this._ecoCool) this._ecoHeat = this._ecoCool;
@@ -1162,11 +1254,13 @@ export class RsRoomDetail extends LitElement {
         occupancy_sensors: [...this._selectedOccupancySensors],
         occupancy_eco_enabled: this._occupancyEcoEnabled,
         occupancy_eco_delay: this._occupancyEcoDelay,
-        preheat_enabled: this._preheatEnabled,
         window_sensors: [...this._selectedWindowSensors],
         window_open_delay: this._windowOpenDelay,
         window_close_delay: this._windowCloseDelay,
         climate_mode: this._climateMode,
+        cooling_interlock_entities: this._coolingInterlockEntities,
+        cooling_interlock_delay: this._coolingInterlockDelay,
+        cooling_interlock_deadband: this._coolingInterlockDeadband,
         schedules: this._schedules,
         schedule_selector_entity: this._scheduleSelectorEntity,
         comfort_heat: this._comfortHeat,

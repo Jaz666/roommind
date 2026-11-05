@@ -282,6 +282,7 @@ export class RsOverrideSection extends LitElement {
                       </button>
                     `,
                   )}
+                  ${this.config.roommind_schedule?.next_change ? html`<button class="override-dur-chip" @click=${() => this._onOverrideActivate(0, true)}>${localize("weekly.until_next", this.language)}</button>` : nothing}
                 </div>
               </div>
             `
@@ -356,7 +357,7 @@ export class RsOverrideSection extends LitElement {
     );
   }
 
-  private async _onOverrideActivate(hours: number): Promise<void> {
+  private async _onOverrideActivate(hours: number, untilNext = false): Promise<void> {
     if (!this._overridePending || !this.config) return;
 
     const pendingType = this._overridePending;
@@ -384,7 +385,9 @@ export class RsOverrideSection extends LitElement {
       type: pendingType,
       heat,
       cool,
-      until: Date.now() / 1000 + hours * 3600,
+      until: untilNext
+        ? (this.config.roommind_schedule?.next_change ?? null)
+        : Date.now() / 1000 + hours * 3600,
     };
     this._optimisticClear = false;
     this._overridePending = null;
@@ -395,6 +398,7 @@ export class RsOverrideSection extends LitElement {
       area_id: this.config.area_id,
       override_type: pendingType,
       duration: hours,
+      until_next_change: untilNext,
     };
     if (pendingType === "custom") {
       if (this.climateMode !== "cool_only") msg.heat = this._overrideCustomHeat;

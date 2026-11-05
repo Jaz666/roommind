@@ -1,0 +1,62 @@
+name: morning-boost-handover
+description: >
+  A responsive room with equal heat/cool targets uses an old saved +3C boost
+  setting. Morning preparation must stay at its comfort target, stop early
+  despite a long minimum run, and retain a cooling gap across cutoff and reload.
+tags: [smoke, household, tariff, ac]
+start: 2026-07-01T05:30
+duration: 55m
+location: {latitude: 51.5, longitude: -0.1, time_zone: Europe/London}
+weather:
+  profile: temperate
+  monthly_mean_c: [18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18]
+  daily_amplitude_c: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  noise_c: 0
+house:
+  building: bestand_teilsaniert
+  outdoor: {sensors: {temperature: sensor.outdoor}}
+  rooms:
+    bedroom:
+      floor_area_m2: 30
+      initial: {temperature: 19}
+      devices:
+        - entity_id: climate.bedroom_ac
+          profile: generic_split_ac
+          params: {sensor_offset_heat_k: 0}
+      sensors: {temperature: {entity_id: sensor.bedroom_temp, noise: 0, report: {min_delta: 0.1, heartbeat_s: 120, min_interval_s: 120}}}
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor
+    control_mode: bangbang
+    ac_tariff_enabled: true
+    ac_morning_boost_enabled: true
+    ac_morning_boost_minutes: 30
+    ac_morning_boost_offset: 3
+    compressor_groups:
+      - id: bedroom
+        name: Bedroom outdoor unit
+        members: [climate.bedroom_ac]
+        min_run_minutes: 60
+        min_off_minutes: 1
+        shared_ac_control: true
+  rooms:
+    bedroom:
+      devices: [{entity_id: climate.bedroom_ac, type: ac, setpoint_mode: direct}]
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: auto
+      comfort_heat: 20
+      eco_heat: 20
+      comfort_cool: 20
+      eco_cool: 20
+timeline:
+  - {at: "+1m", do: roommind.ws, type: roommind/settings/save, ac_morning_boost_rooms: [bedroom]}
+  - {at: "+31m", do: roommind.reload}
+expect:
+  - {invariant: no_heat_and_cool_same_group}
+  - {metric: room.temp_max, room: bedroom, max: 20.5}
+  - {check: "dev('climate.bedroom_ac').mode == 'heat'", at: "+3m", label: responsive room genuinely heats during preparation}
+  - {check: "room.bedroom.cool_target == 20.5", at: "+5m", label: preparation has a cooling deadband}
+  - {check: "dev('climate.bedroom_ac').mode == 'off'", at: "+25m", label: early stopping beats the sixty minute minimum run}
+  - {check: "room.bedroom.heat_target == 20", at: "+35m", label: constant comfort target retained after cutoff}
+  - {check: "room.bedroom.cool_target == 20.5", at: "+35m", label: cooling handover survives cutoff and reload}
+  - {check: "dev('climate.bedroom_ac').mode == 'off'", at: "+35m", label: no immediate switch to cooling after preparation}

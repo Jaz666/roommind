@@ -2011,6 +2011,7 @@ class MPCController:
         ac_heating_boost_target: float | None = None,
         cooling_boost_target: float | None = None,
         heat_source_plan: HeatSourcePlan | None = None,
+        ac_boost_offset: float | None = None,
         compressor_forced_on: set[str] | None = None,
         compressor_forced_off: set[str] | None = None,
         force_off: bool = False,
@@ -2267,9 +2268,8 @@ class MPCController:
                             t = min(ac_heat_boost, effective_target + self._ac_boost_delta, t)
                         else:
                             t = effective_target
-                        shift = self._head_offset(cmd.entity_id, "heat")
-                        ha_t = self._heating_setpoint_ha(
-                            cmd.entity_id, t + shift, effective_target + shift, direct_target
+                        ha_t = self._ac_heating_setpoint_ha(
+                            cmd.entity_id, t, effective_target, ac_boost_offset, direct_target
                         )
                         ac_state = self.hass.states.get(cmd.entity_id)
                         ac_modes = _effective_ac_modes(ac_state)
@@ -2378,8 +2378,9 @@ class MPCController:
                         head_offset=self._head_offset(eid, "idle"),
                     )
                     continue
-                shift = self._head_offset(eid, "heat")
-                ha_t = self._heating_setpoint_ha(eid, ac_heat_target + shift, effective_target + shift, direct_target)
+                ha_t = self._ac_heating_setpoint_ha(
+                    eid, ac_heat_target, effective_target, ac_boost_offset, direct_target
+                )
                 ac_state = self.hass.states.get(eid)
                 ac_modes = _effective_ac_modes(ac_state)
                 if "heat" in ac_modes:
@@ -2675,6 +2676,20 @@ class MPCController:
                     {"entity_id": eid, "temperature": self._hold_setpoint_ha(eid, targets.cool, "cool")},
                     temp_intent="cool",
                 )
+
+    def _ac_heating_setpoint_ha(
+        self,
+        eid: str,
+        proportional: float,
+        target: float,
+        boost_offset: float | None,
+        direct_target: float | None = None,
+    ) -> float:
+        """Temporary device bias; the external-sensor comfort target is unchanged."""
+        shift = self._head_offset(eid, "heat")
+        if boost_offset is not None and self.has_external_sensor:
+            return celsius_to_ha_temp(self.hass, target + shift + self._direct_offsets.get(eid, 0.0) + boost_offset)
+        return self._heating_setpoint_ha(eid, proportional + shift, target + shift, direct_target)
 
     async def _async_hold_modulate(
         self, eid: str, state: Any, targets: TargetTemps, current_temp: float | None

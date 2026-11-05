@@ -14,6 +14,26 @@ export interface NotificationTarget {
   notify_when: "always" | "home_only";
 }
 
+export interface WeeklyBlock {
+  from: string;
+  to: string;
+  data: { heat_temperature: number; cool_temperature: number };
+}
+export interface ScheduleChoice {
+  id: string;
+  name: string;
+}
+export interface ReusableSchedule extends ScheduleChoice {
+  revision: number;
+  days: Record<string, WeeklyBlock[]>;
+  area_ids: string[];
+}
+export interface ScheduleSummary extends ScheduleChoice {
+  targets: WeeklyBlock["data"] | null;
+  next_change: number | null;
+  next_targets: WeeklyBlock["data"] | null;
+}
+
 export interface ScheduleEntry {
   entity_id: string;
 }
@@ -56,6 +76,13 @@ export interface RoomLiveData {
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
+  ac_tariff_status?: "peak" | "boost" | "warmth_hold" | null;
+  ac_heating_locked?: boolean;
+  ac_boost_target?: number | null;
+  ac_boost_until?: number | null;
+  shared_ac_waiting_reason?: string | null;
+  heating_blocked_by_cooling?: boolean;
+  cooling_interlock_reason?: "cooling" | "recovery" | "cooling_status_unknown" | null;
   compressor_protection_active: boolean;
   compressor_protection_reason: "min_off" | "min_run" | null;
   compressor_protection_until: number | null;
@@ -115,6 +142,8 @@ export interface CompressorGroup {
   conflict_resolution: ConflictResolution;
   action_script: string;
   enforce_uniform_mode: boolean;
+  shared_ac_control?: boolean;
+  night_cooling_members?: string[];
 }
 
 export interface RoomConfig {
@@ -132,7 +161,13 @@ export interface RoomConfig {
   window_open_delay: number;
   window_close_delay: number;
   climate_mode: ClimateMode;
+  cooling_interlock_entities?: string[];
+  cooling_interlock_delay?: number;
+  cooling_interlock_deadband?: number;
   schedules: ScheduleEntry[];
+  roommind_schedule_id?: string;
+  roommind_schedule?: ScheduleSummary | null;
+  roommind_schedule_missing?: boolean;
   schedule_selector_entity: string;
   comfort_temp?: number;
   eco_temp?: number;
@@ -174,6 +209,14 @@ export interface RoomConfig {
 }
 
 export interface GlobalSettings {
+  ac_tariff_enabled?: boolean;
+  ac_off_peak_start?: string;
+  ac_off_peak_end?: string;
+  ac_morning_boost_enabled?: boolean;
+  ac_morning_boost_minutes?: number;
+  ac_morning_boost_offset?: number; // Legacy setting; no extra morning AC bias.
+  ac_morning_boost_stop_margin?: number;
+  ac_morning_boost_rooms?: string[];
   outdoor_temp_sensor: string;
   outdoor_humidity_sensor: string;
   outdoor_cooling_min?: number;
@@ -233,7 +276,7 @@ export interface HomeAssistant {
   entities: Record<string, HassEntityRegistryEntry>;
   devices: Record<string, HassDeviceRegistryEntry>;
   language: string;
-  config: { unit_system: { temperature: string } };
+  config: { unit_system: { temperature: string }; time_zone?: string };
   connection?: HassConnection;
 }
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
 from pathlib import Path
 
 from homeassistant.components.frontend import (
@@ -13,8 +12,8 @@ from homeassistant.components.frontend import (
 )
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant
-from homeassistant.helpers import area_registry as ar
+from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
@@ -24,9 +23,8 @@ from .control.direct_valve import async_release_all_valves, clear_valve_cache
 from .coordinator import RoomMindCoordinator
 from .deprecation import async_schedule_deprecation_check
 from .store import RoomMindStore
-from .utils.area_utils import rooms_with_area
 from .utils.device_utils import configured_valves
-from .websocket_api import async_pause_room, async_register_websocket_commands, async_resume_room
+from .websocket_api import async_register_websocket_commands
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,8 +55,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     hass.data[DOMAIN]["coordinator"] = coordinator
 
+    @callback
+    def cooling_state_changed(event: Event) -> None:
+        """Refresh when an opted-in cooling monitor changes, including app writes."""
+        entity_id = event.data.get("entity_id")
+        if any(entity_id in room.get("cooling_interlock_entities", []) for room in store.get_rooms().values()):
+            hass.async_create_task(coordinator.async_request_refresh())
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, cooling_state_changed))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(async_track_area_changes(hass))
 
     # Clean up orphaned entities (e.g. cover entities for rooms without covers)
     coordinator.cleanup_orphaned_entities()
@@ -68,24 +74,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _async_check_version_mismatch(hass)
 
     return True
-
-
-def async_track_area_changes(hass: HomeAssistant) -> Callable[[], None]:
-    """A room rests while its Home Assistant area is deleted and runs again once it is back (#494)."""
-
-    async def _async_area_updated(event: Event[ar.EventAreaRegistryUpdatedData]) -> None:
-        area_id = event.data["area_id"]
-        if hass.data[DOMAIN]["store"].get_room(area_id) is None:
-            return
-        if event.data["action"] == "remove":
-            _LOGGER.info("Area '%s' was deleted, its room rests until the area is back or it is deleted", area_id)
-            await async_pause_room(hass, area_id)
-        elif event.data["action"] == "create":
-            _LOGGER.info("Area '%s' is back, its room runs again", area_id)
-            await async_resume_room(hass, area_id)
-
-    unsub: Callable[[], None] = hass.bus.async_listen(ar.EVENT_AREA_REGISTRY_UPDATED, _async_area_updated)
-    return unsub
 
 
 async def _async_migrate_storage(hass: HomeAssistant) -> None:
@@ -160,9 +148,7 @@ async def _async_release_all_valves(hass: HomeAssistant) -> None:
     A reload pins them again on the next cycle.
     """
     store = hass.data.get(DOMAIN, {}).get("store")
-    await async_release_all_valves(
-        hass, configured_valves(rooms_with_area(hass, store.get_rooms())) if store is not None else {}
-    )
+    await async_release_all_valves(hass, configured_valves(store.get_rooms()) if store is not None else {})
 
 
 async def _async_check_version_mismatch(hass: HomeAssistant) -> None:
@@ -225,7 +211,7 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
                     "name": "roommind-panel",
                     "embed_iframe": False,
                     "trust_external": False,
-                    "js_url": "/roommind/roommind-panel.js",
+                    "js_url": f"/roommind/roommind-panel.js?v={VERSION}",
                 }
             },
         )
