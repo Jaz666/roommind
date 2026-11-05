@@ -50,11 +50,11 @@ Schedule Helpers and reusable schedules work. Morning preparation does not add
 mould-prevention increases to that target; ordinary mould prevention resumes
 outside the preparation window if enabled.
 
-**The beta 5 temporary AC target increase has been removed.** Existing saved
-`ac_morning_boost_offset` values are ignored. During preparation, AC heating uses
-the room's morning target plus any existing Direct device calibration offset,
-subject to the device's limits and temperature-step rounding. It does not use an
-additional morning offset or the proportional maximum-temperature boost.
+During morning preparation, each AC follows its room device's setpoint mode.
+`Direct` sends the morning target plus its configured calibration offset.
+`Proportional` uses RoomMind's normal proportional heating setpoint, based on the
+morning target and current room temperature. The removed beta 5 temporary
+`ac_morning_boost_offset` is ignored.
 
 With a 21°C morning target and the default 0.2°C stopping margin, RoomMind stops
 heating at 20.8°C, even during a shared minimum-run hold. The stopping decision
