@@ -1583,7 +1583,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
                     heat_source_plan=heat_source_plan,
-                    ac_boost_offset=0.0 if tariff.boost_target is not None and mode == MODE_HEATING else None,
                     compressor_forced_on=compressor_forced_on or None,
                     compressor_forced_off=compressor_forced_off or None,
                     force_off=force_off or tariff.heating_paused,

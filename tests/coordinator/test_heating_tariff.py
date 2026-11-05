@@ -54,7 +54,7 @@ async def test_peak_override_cannot_restart_ac(hass, mock_config_entry):
     assert any(c.get("temperature") == 24.5 for c in calls(hass, T))
 
 
-async def test_final_cheap_minutes_use_morning_target_without_extra_device_bias(hass, mock_config_entry):
+async def test_final_cheap_minutes_respect_ac_setpoint_mode(hass, mock_config_entry):
     coordinator, store = setup(hass, mock_config_entry)
     enable(store, boost=True)
     store.get_rooms.return_value["bedroom"].update(climate_control_enabled=False)
@@ -62,8 +62,16 @@ async def test_final_cheap_minutes_use_morning_target_without_extra_device_bias(
     assert live["living"]["heat_target"] == 21
     assert live["living"]["ac_boost_target"] == 21
     assert any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
-    assert not any(c.get("temperature", 0) > 21 for c in calls(hass, A))
+    # Direct mode sends the morning target without proportional boost.
+    assert not any(c.get("temperature", 0) > 21.5 for c in calls(hass, A))
     assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["living"]["devices"][1]["setpoint_mode"] = "proportional"
+    store.get_rooms.return_value["bedroom"].update(climate_control_enabled=False)
+    await tariff_update(coordinator, 4, 45)
+    assert any(c.get("temperature", 0) > 21.5 for c in calls(hass, A))
 
 
 @pytest.mark.parametrize("disabled", ["global", "room", "unowned"])
