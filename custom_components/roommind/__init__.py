@@ -14,7 +14,8 @@ from homeassistant.components.frontend import (
 )
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.const import EVENT_STATE_CHANGED
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
@@ -62,6 +63,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     hass.data[DOMAIN]["coordinator"] = coordinator
 
+    @callback
+    def cooling_state_changed(event: Event) -> None:
+        """Refresh when an opted-in cooling monitor changes, including app writes."""
+        entity_id = event.data.get("entity_id")
+        if any(entity_id in room.get("cooling_interlock_entities", []) for room in store.get_rooms().values()):
+            hass.async_create_task(coordinator.async_request_refresh())
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_STATE_CHANGED, cooling_state_changed))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(async_track_area_changes(hass))
 

@@ -188,7 +188,7 @@ export class RsSettingsCompressor extends RsSettingsBase {
         ></rs-list-row>
 
         ${
-          group.master_entity || group.enforce_uniform_mode
+          group.shared_ac_control
             ? html`
                 <ha-select
                   .label=${localize("compressor.conflict_resolution", l)}
@@ -274,6 +274,9 @@ export class RsSettingsCompressor extends RsSettingsBase {
             updated[groupIdx] = {
               ...updated[groupIdx],
               members: updated[groupIdx].members.filter((m) => m !== entityId),
+              night_cooling_members: updated[groupIdx].night_cooling_members?.filter(
+                (m) => m !== entityId,
+              ),
             };
             this._fireGroups(updated);
           }}

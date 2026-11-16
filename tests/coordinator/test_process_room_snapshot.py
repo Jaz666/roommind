@@ -32,6 +32,13 @@ def _setup_coordinator(hass, mock_config_entry, rooms, settings=None):
 
 # Keys that every normal (non-outdoor) room return dict must contain.
 NORMAL_ROOM_KEYS = {
+    "model_heating_source",
+    "dehumidifier_power_watts",
+    "thermal_learning_source",
+    "heating_blocked_by_cooling",
+    "cooling_interlock_reason",
+    "shared_ac_waiting_reason",
+    "ac_cheap_heating_allowed",
     "area_id",
     "current_temp",
     "current_temp_raw",
@@ -79,6 +86,10 @@ NORMAL_ROOM_KEYS = {
     "cover_forced_reason",
     "cover_reason",
     "active_cover_schedule_index",
+    "ac_tariff_status",
+    "ac_heating_locked",
+    "ac_boost_target",
+    "ac_boost_until",
     "active_heat_sources",
     "compressor_protection_active",
     "compressor_protection_reason",

@@ -19,6 +19,7 @@ from ..const import (
     DEFAULT_ECO_HEAT,
     DEFAULT_OUTDOOR_COOLING_MIN,
     DEFAULT_OUTDOOR_HEATING_MAX,
+    DOMAIN,
     HEATING_SYSTEM_RADIATOR,
     MODE_IDLE,
     is_override_active,
@@ -190,8 +191,12 @@ async def _compute_target_forecast(
 
     presence_away = not room.get("ignore_presence", False) and is_presence_away(hass, room, settings)
 
-    entity_id = get_active_schedule_entity(hass, room)
+    entity_id = None if room.get("roommind_schedule_id") else get_active_schedule_entity(hass, room)
     schedule_blocks = await read_schedule_blocks(hass, entity_id, cache=schedule_blocks_cache) if entity_id else None
+
+    if room.get("roommind_schedule_id"):
+        reusable = hass.data[DOMAIN]["store"].get_schedules().get(room["roommind_schedule_id"])
+        schedule_blocks = reusable["days"] if reusable else None
 
     _hass = hass
     converter = lambda v: ha_temp_to_celsius(_hass, v)  # noqa: E731
@@ -215,7 +220,7 @@ async def _compute_target_forecast(
             eco_heat,
             eco_cool,
             presence_away=presence_away,
-            block_temp_converter=converter,
+            block_temp_converter=None if room.get("roommind_schedule_id") else converter,
             presence_away_action=settings.get("presence_away_action", "eco"),
             schedule_off_action=settings.get("schedule_off_action", "eco"),
             presence_clears_override=bool(settings.get("presence_clears_override", False)),
@@ -347,7 +352,8 @@ async def build_analytics_data(
         mgr = coordinator._model_manager
         if area_id in mgr._estimators:
             est = mgr._estimators[area_id]
-            rc = est.get_model()
+            selected_source = coordinator.rooms.get(area_id, {}).get("model_heating_source", "radiator")
+            rc = est.get_model(selected_source)
             pred_std_idle = est.prediction_std(0.0, 20.0, 15.0, 5.0)
             pred_std_heat = est.prediction_std(rc.Q_heat, 20.0, 10.0, 5.0)
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
@@ -401,6 +407,12 @@ async def build_analytics_data(
                 "n_observations": est._n_updates,
                 "last_update_at": est._last_update_at,
                 "n_heating": est._n_heating,
+                "ac_heating_strength": est._x[7],
+                "radiator_heating_strength": est._x[2],
+                "source_layout": est._source_layout,
+                "has_dehumidifier": bool(room_config.get("dehumidifier_power_sensor")),
+                "n_ac_heating": est._n_ac_heating,
+                "dehumidifier_gain_per_kw": est._x[8],
                 "n_cooling": est._n_cooling,
                 "applicable_modes": sorted(est._applicable_modes),
                 "mpc_active": mpc_active,
@@ -458,7 +470,12 @@ async def build_analytics_data(
     if prediction_enabled and target_forecast and coordinator:
         mgr = coordinator._model_manager
         if area_id in mgr._estimators:
-            model = mgr.get_model(area_id)
+            live = coordinator.rooms.get(area_id, {})
+            model = mgr.get_model(
+                area_id,
+                live.get("model_heating_source", "radiator"),
+                (live.get("dehumidifier_power_watts") or 0.0) / 1000,
+            )
             est = mgr._estimators[area_id]
             all_points = detail if detail else history
             current_t: float | None = None
@@ -532,7 +549,10 @@ async def build_analytics_data(
                         window_open=coordinator._window_manager._paused.get(area_id, False),
                         mpc_active=mpc_runs,
                         room_config=room_config,
-                        settings=settings,
+                        settings={**settings, "control_mode": "bangbang"}
+                        if live.get("model_heating_source") == "mixed"
+                        or live.get("dehumidifier_power_watts", 0) is None
+                        else settings,
                         all_points=all_points,
                         solar_series=solar_series,
                         acs_can_heat=check_acs_can_heat(hass, room_config),

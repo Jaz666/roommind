@@ -227,13 +227,8 @@ class TestGhostHeatingGuard:
         )
         kwargs = await _run_and_capture_train_kwargs(hass, mock_config_entry, states_get, room=multi_device_room)
 
-        # Even if commanded/observed are contradictory, guard must not force
-        # idle — that would need a reliable single observation.
-        assert kwargs is not None
-        assert kwargs["ekf_mode"] in (MODE_HEATING, MODE_COOLING, MODE_IDLE)
-        # With both actions present, _observe_device_action returns None → no override.
-        # The commanded-mode path is used.  We only assert non-interference:
-        # q_residual is NOT forced to 0 unless guard fires or heat_source aggregated pf=0.
+        # Conflicting physical sources cannot train either heating coefficient.
+        assert kwargs is None
 
     @pytest.mark.asyncio
     async def test_guard_inactive_in_managed_mode(self, hass, mock_config_entry):
@@ -444,16 +439,9 @@ class TestGhostHeatingGuard:
         ):
             await coordinator._async_update_data()
 
-        assert training_mock.called
-        kwargs = training_mock.call_args.kwargs
-        if observable:
-            assert kwargs["ekf_mode"] == MODE_HEATING
-            assert kwargs["ekf_pf"] == 1.0
-            return
-        # With all plan commands at pf=0, mean(pf)=0 → zero-pf normalize
-        assert kwargs["ekf_pf"] == 0.0
-        assert kwargs["ekf_mode"] == MODE_IDLE
-        assert kwargs["q_residual"] == 0.0
+        # Both active sources (or unobservable ones) cannot identify a heater.
+        # Synchronise temperature and skip parameter learning instead.
+        assert not training_mock.called
 
     @pytest.mark.asyncio
     async def test_no_training_when_learning_disabled_for_room(self, hass, mock_config_entry):

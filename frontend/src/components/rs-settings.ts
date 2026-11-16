@@ -38,6 +38,7 @@ import "./settings/rs-settings-general";
 import "./settings/rs-settings-sensors";
 import "./settings/rs-settings-price";
 import "./settings/rs-settings-control";
+import "./settings/rs-settings-tariff";
 import "./settings/rs-settings-presence";
 import "./settings/rs-settings-vacation";
 import "./settings/rs-settings-valve";
@@ -198,6 +199,8 @@ export class RsSettings extends LitElement {
   @state() private _groupByFloor = false;
   @state() private _climateControlActive = true;
   @state() private _learningDisabledRooms: string[] = [];
+  @state() private _heatPumpPowerSensor = "";
+  @state() private _heatPumpActiveWatts = 150;
   @state() private _outdoorTempSensor = "";
   @state() private _priceEntity = "";
   @state() private _outdoorHumiditySensor = "";
@@ -479,6 +482,8 @@ export class RsSettings extends LitElement {
       case "sensors":
         return html`<rs-settings-sensors
           .hass=${this.hass}
+          .heatPumpPowerSensor=${this._heatPumpPowerSensor}
+          .heatPumpActiveWatts=${this._heatPumpActiveWatts}
           .outdoorTempSensor=${this._outdoorTempSensor}
           .outdoorHumiditySensor=${this._outdoorHumiditySensor}
           .weatherEntity=${this._weatherEntity}

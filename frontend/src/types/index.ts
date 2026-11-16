@@ -14,6 +14,26 @@ export interface NotificationTarget {
   notify_when: "always" | "home_only";
 }
 
+export interface WeeklyBlock {
+  from: string;
+  to: string;
+  data: { heat_temperature: number; cool_temperature: number };
+}
+export interface ScheduleChoice {
+  id: string;
+  name: string;
+}
+export interface ReusableSchedule extends ScheduleChoice {
+  revision: number;
+  days: Record<string, WeeklyBlock[]>;
+  area_ids: string[];
+}
+export interface ScheduleSummary extends ScheduleChoice {
+  targets: WeeklyBlock["data"] | null;
+  next_change: number | null;
+  next_targets: WeeklyBlock["data"] | null;
+}
+
 export interface ScheduleEntry {
   entity_id: string;
 }
@@ -58,6 +78,8 @@ export interface RoomLiveData {
   /** Applied electricity price shift per side (K), 0 when none. */
   price_shift_heat?: number;
   price_shift_cool?: number;
+  heating_blocked_by_cooling?: boolean;
+  cooling_interlock_reason?: "cooling" | "recovery" | "cooling_status_unknown" | null;
   price_level?: "cheap" | "normal" | "expensive" | null;
   /** Stricter target a running pre-heat (pre-cool) aims at and when it starts (Unix s). */
   preheat?: { mode: "heating" | "cooling"; target: number; at: number } | null;
@@ -108,6 +130,7 @@ export interface DeviceConfig {
   idle_fan_mode?: string; // default "low"
   setback_auto_off?: boolean; // setback ends in off after an hour without demand, default off (#255)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
+  energy_sensor?: string;
   setpoint_offset?: number; // °C added to the room target in direct mode, default 0
   coil_dry?: "inherit" | "on" | "off"; // default "inherit"
   coil_dry_minutes?: number; // 0 = inherit global
@@ -137,6 +160,9 @@ export interface CompressorGroup {
   conflict_resolution: ConflictResolution;
   action_script: string;
   enforce_uniform_mode: boolean;
+  shared_ac_control?: boolean;
+  heating_idle_mode?: "off" | "minimum_heat";
+  night_cooling_members?: string[];
 }
 
 export interface RoomConfig {
@@ -146,6 +172,10 @@ export interface RoomConfig {
   devices?: DeviceConfig[];
   temperature_sensor: string;
   humidity_sensor: string;
+  dehumidifier_power_sensor?: string;
+  dehumidifier_entity?: string;
+  dehumidifier_switch?: string;
+  preheat_max_minutes?: number;
   occupancy_sensors?: string[];
   occupancy_eco_enabled?: boolean;
   occupancy_eco_delay?: number;
@@ -165,7 +195,13 @@ export interface RoomConfig {
   window_open_delay: number;
   window_close_delay: number;
   climate_mode: ClimateMode;
+  cooling_interlock_entities?: string[];
+  cooling_interlock_delay?: number;
+  cooling_interlock_deadband?: number;
   schedules: ScheduleEntry[];
+  roommind_schedule_id?: string;
+  roommind_schedule?: ScheduleSummary | null;
+  roommind_schedule_missing?: boolean;
   schedule_selector_entity: string;
   comfort_temp?: number;
   eco_temp?: number;
@@ -222,6 +258,16 @@ export interface PriceStatus {
 }
 
 export interface GlobalSettings {
+  heat_pump_power_sensor?: string;
+  heat_pump_active_watts?: number;
+  ac_tariff_enabled?: boolean;
+  ac_off_peak_start?: string;
+  ac_off_peak_end?: string;
+  ac_morning_boost_enabled?: boolean;
+  ac_morning_boost_minutes?: number;
+  ac_morning_boost_offset?: number; // Legacy setting; no extra morning AC bias.
+  ac_morning_boost_stop_margin?: number;
+  ac_morning_boost_rooms?: string[];
   outdoor_temp_sensor: string;
   price_entity?: string;
   outdoor_humidity_sensor: string;

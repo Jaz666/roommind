@@ -1,0 +1,54 @@
+name: external-cooling-interlock
+description: >
+  An independently controlled AC cools a room that would otherwise request radiator
+  heat. The radiator must stop, app cooling must remain untouched, and recovery
+  and unavailable-device protection must hold before heating resumes.
+tags: [smoke, interlock, trv, ac]
+start: 2026-01-12T00:00
+duration: 2h
+location: {latitude: 52.5, longitude: 13.4, time_zone: Europe/Berlin}
+weather: {profile: temperate}
+house:
+  building: bestand_teilsaniert
+  outdoor: {sensors: {temperature: sensor.aussen_temp}}
+  rooms:
+    bedroom:
+      floor_area_m2: 25
+      initial: {temperature: 18.0}
+      devices:
+        - {entity_id: climate.bedroom_trv, profile: generic_trv}
+        - {entity_id: climate.bedroom_ac, profile: generic_split_ac}
+      sensors: {temperature: {entity_id: sensor.bedroom_temp}}
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.aussen_temp
+    control_mode: bangbang
+  rooms:
+    bedroom:
+      devices:
+        - {entity_id: climate.bedroom_trv, type: trv, heating_system_type: radiator, idle_action: setback}
+      temperature_sensor: sensor.bedroom_temp
+      climate_mode: heat_only
+      comfort_heat: 21.0
+      eco_heat: 21.0
+      cooling_interlock_entities: [climate.bedroom_ac]
+      cooling_interlock_delay: 300
+      cooling_interlock_deadband: 0.3
+timeline:
+  - {at: "+10m", do: ha.service, service: climate.set_temperature, data: {entity_id: climate.bedroom_ac, temperature: 16, hvac_mode: cool}}
+  - {at: "+30m", do: ha.service, service: climate.set_hvac_mode, data: {entity_id: climate.bedroom_ac, hvac_mode: "off"}}
+  - {at: "+33m", do: roommind.reload}
+  - {at: "+50m", do: entity.unavailable, entity_id: climate.bedroom_ac}
+  - {at: "+65m", do: entity.available, entity_id: climate.bedroom_ac}
+expect:
+  - {check: "room.bedroom.commanded_mode == 'heating'", at: "+5m", label: initial radiator demand}
+  - {check: "room.bedroom.heating_blocked_by_cooling == true", at: "+15m", label: app cooling inhibits heating}
+  - {check: "room.bedroom.commanded_mode == 'idle'", at: "+15m", label: no radiator command during cooling}
+  - {check: "dev('climate.bedroom_trv').mode == 'off'", at: "+15m", label: radiator closes despite setback idle policy}
+  - {check: "dev('climate.bedroom_ac').mode == 'cool'", at: "+15m", label: monitored AC is left running}
+  - {check: "room.bedroom.cooling_interlock_reason == 'recovery'", at: "+32m", label: delay after cooling}
+  - {check: "room.bedroom.cooling_interlock_reason == 'recovery'", at: "+34m", label: recovery survives integration reload}
+  - {check: "room.bedroom.heating_blocked_by_cooling == false", at: "+40m", label: heating can resume after recovery}
+  - {check: "room.bedroom.cooling_interlock_reason == 'cooling_status_unknown'", at: "+55m", label: unavailable AC blocks heating}
+  - {check: "room.bedroom.cooling_interlock_reason == 'recovery'", at: "+67m", label: reconnect requires recovery}
+  - {check: "room.bedroom.heating_blocked_by_cooling == false", at: "+75m", label: recovery releases after reconnect}

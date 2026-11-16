@@ -45,6 +45,11 @@ class ValveManager:
         """Check if a specific entity is currently being valve-cycled."""
         return entity_id in self._cycling
 
+    def cancel_cycles(self, entity_ids: set[str]) -> None:
+        """Forget cycles whose valves have been closed by a control interlock."""
+        for eid in entity_ids:
+            self._cycling.pop(eid, None)
+
     @property
     def cycling_eids(self) -> set[str]:
         """Return set of entity IDs currently being cycled."""

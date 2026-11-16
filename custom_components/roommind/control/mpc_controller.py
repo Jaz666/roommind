@@ -69,7 +69,7 @@ from ..utils.device_utils import (
 )
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
 from .direct_valve import async_release_valve, async_set_valve, clear_valve_cache
-from .mpc_optimizer import MPCOptimizer, MPCPlan, preheat_max_blocks, slow_start_penalty
+from .mpc_optimizer import MPCOptimizer, MPCPlan, room_preheat_blocks, slow_start_penalty
 from .residual_heat import get_min_run_blocks, heat_min_run_blocks, mean_rebound
 from .thermal_model import RoomModelManager
 
@@ -962,6 +962,7 @@ def ac_heating_excluded(room_config: dict) -> bool:
     return (
         room_config.get("climate_mode") == CLIMATE_MODE_HEAT_ONLY
         and not orchestrated
+        and not room_config.get("ac_cheap_heating_allowed", False)
         and bool(get_trv_eids(room_config.get("devices", [])))
     )
 
@@ -1077,7 +1078,7 @@ def valve_demand(
     """
     if model.Q_heat <= 0:
         return 0.0
-    hold = model.U * (target - outdoor_temp) - model.Q_solar * q_solar - model.Q_occupancy * q_occupancy
+    hold = model.U * (target - outdoor_temp) - model.Q_solar * q_solar - model.Q_occupancy * q_occupancy - model.Q_aux
     pf = hold / model.Q_heat + (target - current_temp) / VALVE_PROPORTIONAL_BAND_K
     return min(1.0, pf) if pf > 0.0 else 0.0
 
@@ -1339,6 +1340,7 @@ def is_mpc_active(
     *,
     settings: dict | None = None,
     room_sides: tuple[bool, bool] | None = None,
+    heating_source: str = "radiator",
 ) -> bool:
     """Check if MPC control is active for a room (the controller's gate).
 
@@ -1350,15 +1352,19 @@ def is_mpc_active(
     """
     if not is_mpc_enabled(settings):
         return False
-    model = model_manager.get_model(area_id)
+    model = model_manager.get_model(area_id, heating_source)
     Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
-    pred_std = model_manager.get_prediction_std(area_id, Q_check, current_temp, outdoor_temp, PLAN_DT_MINUTES)
+    pred_std = model_manager.get_prediction_std(
+        area_id, Q_check, current_temp, outdoor_temp, PLAN_DT_MINUTES, heating_source=heating_source
+    )
     if pred_std >= MPC_MAX_PREDICTION_STD:
         return False
 
     if not can_heat and not can_cool and room_sides is not None:
         can_heat, can_cool = room_sides
     n_idle, n_heating, n_cooling = model_manager.get_mode_counts(area_id)
+    if heating_source == "ac":
+        n_heating = model_manager.get_estimator(area_id)._n_ac_heating
     if n_idle < MIN_IDLE_UPDATES:
         return False
     if can_heat and n_heating < MIN_ACTIVE_UPDATES:
@@ -1472,7 +1478,7 @@ class MPCController:
         self.setback_eids: list[str] = []
 
         s = settings or {}
-        self._mpc_enabled = is_mpc_enabled(s)
+        self._mpc_enabled = is_mpc_enabled(s) and room_config.get("model_inputs_known", True)
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
         self.outdoor_heating_max = s.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
 
@@ -1481,9 +1487,7 @@ class MPCController:
         cw = s.get("comfort_weight", 70)
         self._w_comfort = max(1.0, cw / 10.0)
         self._w_energy = max(1.0, (100 - cw) / 10.0)
-        self._preheat_max_blocks = preheat_max_blocks(
-            cw, PLAN_DT_MINUTES, enabled=room_config.get("preheat_enabled", True)
-        )
+        self._preheat_max_blocks = room_preheat_blocks(cw, room_config, heating_system_type)
         self._approach_rate = min(1.0, APPROACH_RATE_MIN + (1.0 - APPROACH_RATE_MIN) * cw / DEFAULT_COMFORT_WEIGHT)
         self._valve_modulating = is_valve_modulating(
             self._devices, check_acs_can_heat(hass, room_config), self.has_external_sensor
@@ -1529,7 +1533,11 @@ class MPCController:
 
         # Use the model's prediction uncertainty to decide MPC vs bang-bang.
         # Compute std for the actual operating conditions (heating power as proxy).
-        model = self._model_manager.get_model(self._area_id)
+        model = self._model_manager.get_model(
+            self._area_id,
+            self.room_config.get("model_heating_source", "radiator"),
+            self.room_config.get("dehumidifier_kw", 0.0),
+        )
         can_heat, can_cool = self._get_can_heat_cool()
         Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
         T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
@@ -1542,6 +1550,7 @@ class MPCController:
             q_solar=self.q_solar,
             q_residual=self.q_residual,
             q_occupancy=self.q_occupancy,
+            heating_source=self.room_config.get("model_heating_source", "radiator"),
         )
         if pred_std < MPC_MAX_PREDICTION_STD and self._has_enough_data(can_heat, can_cool):
             plan_from = (
@@ -1555,6 +1564,8 @@ class MPCController:
     def _has_enough_data(self, can_heat: bool, can_cool: bool) -> bool:
         """Check if the model has enough samples for reliable MPC."""
         n_idle, n_heating, n_cooling = self._model_manager.get_mode_counts(self._area_id)
+        if self.room_config.get("model_heating_source") == "ac":
+            n_heating = self._model_manager.get_estimator(self._area_id)._n_ac_heating
         if n_idle < MIN_IDLE_UPDATES:
             return False
         # Require active-mode data for the modes this room can actually use
@@ -1685,7 +1696,11 @@ class MPCController:
         Used by the safety guard to check whether temperature will drift below
         (or above) target before suppressing optimizer recommendations.
         """
-        model = self._model_manager.get_model(self._area_id)
+        model = self._model_manager.get_model(
+            self._area_id,
+            self.room_config.get("model_heating_source", "radiator"),
+            self.room_config.get("dehumidifier_kw", 0.0),
+        )
         T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
         return model.predict(
             current_temp,
@@ -1707,7 +1722,11 @@ class MPCController:
         if current_temp is None or (targets.heat is None and targets.cool is None):
             return MODE_IDLE, 0.0
 
-        model = self._model_manager.get_model(self._area_id)
+        model = self._model_manager.get_model(
+            self._area_id,
+            self.room_config.get("model_heating_source", "radiator"),
+            self.room_config.get("dehumidifier_kw", 0.0),
+        )
         can_heat, can_cool = self._get_can_heat_cool()
 
         # Use heat target for horizon computation (heating is most common)
@@ -1845,7 +1864,10 @@ class MPCController:
             # matches the optimizer's per-system lookahead (read from the plan) so
             # mild-weather UFH pre-heat decisions don't get suppressed by a short
             # drift check.
-            guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1)
+            guard_blocks = min(
+                self._preheat_max_blocks + 1,
+                max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1),
+            )
             lead_heat = [h for h in raw_heat[:guard_blocks] if h is not None]
             lead_cool = [c for c in raw_cool[:guard_blocks] if c is not None]
             self._lead_heat = max(lead_heat) if lead_heat else None
@@ -2196,6 +2218,7 @@ class MPCController:
         ac_heating_boost_target: float | None = None,
         cooling_boost_target: float | None = None,
         heat_source_plan: HeatSourcePlan | None = None,
+        ac_boost_offset: float | None = None,
         compressor_forced_on: set[str] | None = None,
         compressor_forced_off: set[str] | None = None,
         force_off: bool = False,
@@ -2453,9 +2476,8 @@ class MPCController:
                             t = min(ac_heat_boost, effective_target + self._ac_boost_delta, t)
                         else:
                             t = effective_target
-                        shift = self._head_offset(cmd.entity_id, "heat")
-                        ha_t = self._heating_setpoint_ha(
-                            cmd.entity_id, t + shift, effective_target + shift, direct_target
+                        ha_t = self._ac_heating_setpoint_ha(
+                            cmd.entity_id, t, effective_target, ac_boost_offset, direct_target
                         )
                         ac_state = self.hass.states.get(cmd.entity_id)
                         ac_modes = _effective_ac_modes(ac_state)
@@ -2497,8 +2519,15 @@ class MPCController:
                         )
                         await self._async_release_valve(cmd.entity_id)
                     else:
-                        # ACs can be turned off without boiler cycling concerns
-                        await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "off"})
+                        await async_idle_device(
+                            self.hass,
+                            cmd.entity_id,
+                            self._devices,
+                            area_id=self._area_id,
+                            targets=targets,
+                            force_off=self._force_off,
+                            use_setpoint_offset=self.has_external_sensor,
+                        )
             return
 
         if mode == MODE_HEATING:
@@ -2564,8 +2593,9 @@ class MPCController:
                         head_offset=self._head_offset(eid, "idle"),
                     )
                     continue
-                shift = self._head_offset(eid, "heat")
-                ha_t = self._heating_setpoint_ha(eid, ac_heat_target + shift, effective_target + shift, direct_target)
+                ha_t = self._ac_heating_setpoint_ha(
+                    eid, ac_heat_target, effective_target, ac_boost_offset, direct_target
+                )
                 ac_state = self.hass.states.get(eid)
                 ac_modes = _effective_ac_modes(ac_state)
                 if "heat" in ac_modes:
@@ -2878,6 +2908,20 @@ class MPCController:
                     {"entity_id": eid, "temperature": self._hold_setpoint_ha(eid, targets.cool, "cool")},
                     temp_intent="cool",
                 )
+
+    def _ac_heating_setpoint_ha(
+        self,
+        eid: str,
+        proportional: float,
+        target: float,
+        boost_offset: float | None,
+        direct_target: float | None = None,
+    ) -> float:
+        """Temporary device bias; the external-sensor comfort target is unchanged."""
+        shift = self._head_offset(eid, "heat")
+        if boost_offset is not None and self.has_external_sensor:
+            return celsius_to_ha_temp(self.hass, target + shift + self._direct_offsets.get(eid, 0.0) + boost_offset)
+        return self._heating_setpoint_ha(eid, proportional + shift, target + shift, direct_target)
 
     async def _async_hold_modulate(
         self, eid: str, state: Any, targets: TargetTemps, current_temp: float | None

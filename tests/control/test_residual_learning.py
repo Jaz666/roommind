@@ -304,7 +304,7 @@ def test_no_run_state_without_heating_system_type():
 
 def _controller(heat_run: tuple[float, float] | None, scale: float) -> MPCController:
     manager = RoomModelManager()
-    manager.get_model = lambda _area: ROOM  # type: ignore[method-assign]
+    manager.get_model = lambda *_args, **_kwargs: ROOM  # type: ignore[method-assign]
     ctrl = MPCController(
         build_hass(),
         make_room(heating_system_type="radiator"),

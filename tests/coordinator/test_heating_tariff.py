@@ -1,0 +1,386 @@
+"""Exercise actual device routing at tariff cutoffs and boost targets."""
+
+from copy import deepcopy
+from datetime import UTC, datetime
+from unittest.mock import patch
+
+import pytest
+
+from .conftest import make_mock_states_get
+from .test_shared_ac_control import BT, A, B, T, calls, setup, update
+
+
+async def tariff_update(coordinator, hour=12, minute=0):
+    now = datetime(2026, 7, 1, hour, minute, tzinfo=UTC).timestamp()
+    with patch("custom_components.roommind.coordinator.time.time", return_value=now):
+        return await update(coordinator, hour=hour, now=now)
+
+
+def enable(store, boost=False):
+    store.get_settings.return_value["compressor_groups"] = deepcopy(
+        store.get_settings.return_value["compressor_groups"]
+    )
+    store.get_settings.return_value.update(
+        ac_tariff_enabled=True,
+        ac_morning_boost_enabled=boost,
+        ac_morning_boost_rooms=["living"],
+        control_mode="bangbang",
+    )
+    # No helper schedule in this test: constant independent-sensor comfort target.
+    for room in store.get_rooms.return_value.values():
+        room["schedules"] = []
+
+
+async def test_peak_uses_gas_with_original_offset_and_cooling_remains_allowed(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store)
+    live = await tariff_update(coordinator)
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert any(c.get("temperature") == 21.5 for c in calls(hass, T))
+    assert any(c.get("hvac_mode") == "cool" for c in calls(hass, B))
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, BT))
+    assert live["living"]["ac_heating_locked"] and live["living"]["ac_tariff_status"] == "peak"
+
+
+async def test_peak_override_cannot_restart_ac(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry, states={A: "heat"})
+    enable(store)
+    store.get_rooms.return_value["living"].update(
+        override_type="custom", override_until=9999999999, override_heat=24, override_cool=25
+    )
+    await tariff_update(coordinator)
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert any(c.get("temperature") == 24.5 for c in calls(hass, T))
+
+
+async def test_final_cheap_minutes_respect_ac_setpoint_mode(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"].update(climate_control_enabled=False)
+    live = await tariff_update(coordinator, 4, 45)
+    assert live["living"]["heat_target"] == 21
+    assert live["living"]["ac_boost_target"] == 21
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    # Direct mode sends the morning target without proportional boost.
+    assert not any(c.get("temperature", 0) > 21.5 for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["living"]["devices"][1]["setpoint_mode"] = "proportional"
+    store.get_rooms.return_value["bedroom"].update(climate_control_enabled=False)
+    await tariff_update(coordinator, 4, 45)
+    assert any(c.get("temperature", 0) > 21.5 for c in calls(hass, A))
+
+
+@pytest.mark.parametrize("disabled", ["global", "room", "unowned"])
+async def test_peak_never_commands_disabled_or_unowned_member(hass, mock_config_entry, disabled):
+    coordinator, store = setup(hass, mock_config_entry, states={A: "heat"})
+    enable(store)
+    if disabled == "global":
+        store.get_settings.return_value["climate_control_active"] = False
+    elif disabled == "room":
+        store.get_rooms.return_value["living"]["climate_control_enabled"] = False
+    else:
+        store.get_rooms.return_value["living"]["temperature_sensor"] = ""
+    await tariff_update(coordinator)
+    assert not calls(hass, A)
+
+
+async def test_cutoff_overrides_shared_minimum_run(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_settings.return_value["compressor_groups"][0]["min_run_minutes"] = 30
+    await tariff_update(coordinator, 4, 59)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="20.6",
+        outdoor_temp="18",
+        extra={
+            A: ("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 24, "min_temp": 16, "max_temp": 30}),
+            B: ("off", {}),
+        },
+    )
+    live = await tariff_update(coordinator, 5)
+    assert live["living"]["ac_heating_locked"]
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_boost_reaching_independent_target_stops_despite_minimum_run(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_settings.return_value["compressor_groups"][0]["min_run_minutes"] = 30
+    await tariff_update(coordinator, 4, 45)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="21.0",
+        outdoor_temp="18",
+        extra={
+            A: ("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 24, "min_temp": 16, "max_temp": 30}),
+            B: ("off", {}),
+        },
+    )
+    await tariff_update(coordinator, 4, 46)
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_peak_ac_idle_setback_cannot_restart_heat(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store)
+    store.get_rooms.return_value["living"]["comfort_heat"] = 19
+    store.get_rooms.return_value["living"]["eco_heat"] = 19
+    store.get_rooms.return_value["living"]["devices"][1].update(idle_action="setback", idle_setback=1)
+    await tariff_update(coordinator)
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_peak_ac_only_room_stays_idle(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store)
+    store.get_rooms.return_value["living"]["devices"] = [{"entity_id": A, "type": "ac"}]
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    live = await tariff_update(coordinator)
+    assert live["living"]["mode"] == "idle"
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_boost_at_target_does_not_restart_idle_setback(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_rooms.return_value["living"]["devices"][1].update(idle_action="setback", idle_setback=1)
+    hass.states.get = make_mock_states_get(
+        temp="21.0",
+        outdoor_temp="18",
+        extra={
+            A: ("off", {"hvac_modes": ["off", "heat", "cool"], "temperature": 24, "min_temp": 16, "max_temp": 30}),
+            B: ("off", {}),
+        },
+    )
+    await tariff_update(coordinator, 4, 46)
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_legacy_boost_offset_is_ignored(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_settings.return_value["ac_morning_boost_offset"] = 5
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    await tariff_update(coordinator, 4, 45)
+    assert not any(c.get("temperature", 0) > 21 for c in calls(hass, A))
+    assert not any(c.get("temperature", 0) > 21 for c in calls(hass, A))
+
+
+async def test_boost_stops_below_target_and_stays_off_after_reload(hass, mock_config_entry):
+    from .conftest import _create_coordinator
+
+    coordinator, store = setup(hass, mock_config_entry, states={A: "heat"})
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_rooms.return_value["living"]["devices"][0].update(idle_action="setback")
+    hass.states.get = make_mock_states_get(
+        temp="20.8",
+        outdoor_temp="18",
+        extra={A: ("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 24}), B: ("off", {})},
+    )
+    await tariff_update(coordinator, 4, 45)
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+    persisted = next(
+        call.args[0]["ac_tariff_boost_state"]
+        for call in store.async_save_settings.call_args_list
+        if "ac_tariff_boost_state" in call.args[0]
+    )
+    store.get_settings.return_value["ac_tariff_boost_state"] = persisted
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="20.7",
+        outdoor_temp="18",
+        extra={A: ("off", {"hvac_modes": ["off", "heat", "cool"], "temperature": 21}), B: ("off", {})},
+    )
+    await tariff_update(coordinator, 4, 46)
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+async def test_constant_equal_targets_do_not_cool_at_cutoff(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_rooms.return_value["living"].update(climate_mode="auto", comfort_cool=21, eco_cool=21)
+    await tariff_update(coordinator, 4, 45)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="21.2",
+        outdoor_temp="18",
+        extra={A: ("off", {"hvac_modes": ["off", "heat", "cool"], "temperature": 21}), B: ("off", {})},
+    )
+    live = await tariff_update(coordinator, 5, 1)
+    assert live["living"]["cool_target"] == 21.5
+    assert not any(c.get("hvac_mode") == "cool" for c in calls(hass, A))
+    assert live["living"]["ac_tariff_status"] == "warmth_hold"
+
+
+async def test_cooling_override_cancels_handover_hold(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_rooms.return_value["living"].update(climate_mode="auto", comfort_cool=21, eco_cool=21)
+    await tariff_update(coordinator, 4, 45)
+    hass.services.async_call.reset_mock()
+    store.get_rooms.return_value["living"].update(override_heat=18, override_cool=19, override_until=9999999999)
+    live = await tariff_update(coordinator, 5, 1)
+    assert live["living"]["cool_target"] == 19
+    # An explicit override cancels the hold; shared changeover time still applies.
+    await tariff_update(coordinator, 5, 7)
+    assert any(c.get("hvac_mode") == "cool" for c in calls(hass, A))
+
+
+async def test_mould_prevention_does_not_inflate_morning_preparation_target(hass, mock_config_entry):
+    from unittest.mock import AsyncMock
+
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    coordinator._evaluate_mold_risk = AsyncMock(return_value=("warning", 75, 15.0, True, 3.0))
+    live = await tariff_update(coordinator, 4, 45)
+    assert live["living"]["heat_target"] == 21
+    assert live["living"]["ac_boost_target"] == 21
+    assert not any(c.get("temperature", 0) > 21 for c in calls(hass, A))
+
+
+async def test_handover_still_allows_automatic_cooling_when_genuinely_hot(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    store.get_rooms.return_value["living"].update(climate_mode="auto", comfort_cool=21, eco_cool=21)
+    await tariff_update(coordinator, 4, 45)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="23",
+        outdoor_temp="18",
+        extra={A: ("off", {"hvac_modes": ["off", "heat", "cool"], "temperature": 21}), B: ("off", {})},
+    )
+    await tariff_update(coordinator, 5, 1)
+    await tariff_update(coordinator, 5, 7)
+    assert any(c.get("hvac_mode") == "cool" for c in calls(hass, A))
+
+
+async def test_sensor_dropout_pauses_heating_without_discarding_cooling_hold(hass, mock_config_entry):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    await tariff_update(coordinator, 4, 45)
+    hass.services.async_call.reset_mock()
+    hass.states.get = make_mock_states_get(
+        temp="unavailable",
+        outdoor_temp="18",
+        extra={A: ("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 21}), B: ("off", {})},
+    )
+    live = await tariff_update(coordinator, 4, 46)
+    assert live["living"]["cool_target"] == 24
+    assert coordinator._heating_tariff.state["living"]["heating_paused"]
+    assert any(c.get("hvac_mode") == "off" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+
+
+@pytest.mark.parametrize("hour,minute", [(0, 1), (2, 0), (4, 45)])
+async def test_heat_only_uses_ac_throughout_cheap_rate(hass, mock_config_entry, hour, minute):
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    store.get_rooms.return_value["living"].update(climate_mode="heat_only", heat_source_orchestration=False)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    live = await tariff_update(coordinator, hour, minute)
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+    assert not any(c.get("hvac_mode") == "cool" for c in calls(hass, A))
+
+    # Master demand follows the routed source even without orchestration enabled.
+    assert coordinator._collect_member_room_modes([T], live, store.get_rooms(), store.get_settings()) == []
+    assert coordinator._collect_member_room_modes([A], live, store.get_rooms(), store.get_settings()) == ["heating"]
+
+
+@pytest.mark.parametrize("initial", ["heat", "off", "fan_only"])
+async def test_peak_preserves_configured_fan_only_while_radiators_heat(hass, mock_config_entry, initial):
+    coordinator, store = setup(hass, mock_config_entry, states={A: initial})
+    enable(store)
+    room = store.get_rooms.return_value["living"]
+    room.update(climate_mode="heat_only")
+    ac = next(d for d in room["devices"] if d["entity_id"] == A)
+    ac.update(idle_action="fan_only", idle_fan_mode="Quiet")
+    # Fixture AC only advertises its basic modes; add the actual Toshiba capability.
+    original = hass.states.get
+
+    def states(eid):
+        state = original(eid)
+        if eid == A:
+            state.attributes.update(hvac_modes=["heat", "cool", "fan_only", "off"], fan_modes=["Quiet"])
+        return state
+
+    hass.states.get = states
+    await tariff_update(coordinator, 12, 0)
+    assert any(c.get("hvac_mode") == "fan_only" for c in calls(hass, A)) or initial == "fan_only"
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, A))
+    assert any(c.get("hvac_mode") == "heat" for c in calls(hass, T))
+
+
+@pytest.mark.parametrize("outdoor,expected", [(0, "radiator"), (18, "ac")])
+async def test_prediction_selects_current_orchestrated_source(hass, mock_config_entry, outdoor, expected):
+    coordinator, store = setup(hass, mock_config_entry, outdoor=outdoor)
+    store.get_settings.return_value.update(control_mode="bangbang", ac_tariff_enabled=False)
+    store.get_rooms.return_value["bedroom"]["climate_control_enabled"] = False
+    live = await tariff_update(coordinator, 12, 0)
+    assert live["living"]["model_heating_source"] == expected
+
+
+@pytest.mark.parametrize("policy", ["minimum_heat", "off"])
+async def test_reached_boost_target_yields_to_shared_standby_without_fan_cycle(hass, mock_config_entry, policy):
+    """A satisfied head must not alternate urgent stops and shared standby."""
+    from unittest.mock import AsyncMock
+
+    coordinator, store = setup(hass, mock_config_entry)
+    enable(store, boost=True)
+    settings = store.get_settings.return_value
+    settings["ac_morning_boost_rooms"] = ["living", "bedroom"]
+    settings["compressor_groups"][0]["heating_idle_mode"] = policy
+    bedroom = store.get_rooms.return_value["bedroom"]
+    bedroom["climate_mode"] = "heat_only"
+    bedroom["devices"][1].update(idle_action="fan_only", idle_fan_mode="Quiet")
+    base = hass.states.get
+    states = {eid: base(eid) for eid in (A, B, T, BT, "sensor.bedroom_temp")}
+    states["sensor.bedroom_temp"].state = "18"
+    hass.states.get = lambda eid: states[eid] if eid in states else base(eid)
+
+    async def apply(domain, service, data, **kwargs):
+        state = states.get(data.get("entity_id"))
+        if domain != "climate" or state is None:
+            return
+        if service == "set_hvac_mode":
+            state.state = data["hvac_mode"]
+        elif service == "set_temperature":
+            state.attributes["temperature"] = data["temperature"]
+
+    hass.services.async_call = AsyncMock(side_effect=apply)
+    await tariff_update(coordinator, 4, 40)
+    assert states[A].state == states[B].state == "heat"
+    states["sensor.bedroom_temp"].state = "19"
+    for minute in (45, 46, 47):
+        hass.services.async_call.reset_mock()
+        await tariff_update(coordinator, 4, minute)
+        assert states[A].state == "heat"
+        assert states[B].state == ("heat" if policy == "minimum_heat" else "off")
+        assert not any(c.get("hvac_mode") == "fan_only" for c in calls(hass, B))
+        if policy == "minimum_heat":
+            assert states[B].attributes["temperature"] == 16
+
+    # Cheap-rate cutoff must still stop both heating heads.
+    hass.services.async_call.reset_mock()
+    await tariff_update(coordinator, 5)
+    assert states[A].state != "heat" and states[B].state != "heat"
+    assert not any(c.get("hvac_mode") == "heat" for c in calls(hass, B))

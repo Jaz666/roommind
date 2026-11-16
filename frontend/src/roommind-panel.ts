@@ -1,6 +1,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, PriceStatus, RoomConfig, RoomWithoutArea } from "./types";
+import type {
+  HomeAssistant,
+  PriceStatus,
+  RoomConfig,
+  RoomWithoutArea,
+  ScheduleChoice,
+} from "./types";
 import { loadHaElements } from "./load-ha-elements";
 import { noteServerTime } from "./utils/server-clock";
 import { localize } from "./utils/localize";
@@ -53,6 +59,7 @@ export class RoomMindPanel extends LitElement {
   @state() private _activeTab: TabId = "areas";
   @state() private _rooms: Record<string, RoomConfig> = {};
   @state() private _roomsWithoutArea: RoomWithoutArea[] = [];
+  @state() private _scheduleChoices: ScheduleChoice[] = [];
   @state() private _roomsLoaded = false;
   /** First rooms/list failed: shown instead of the dashboard until a load succeeds. */
   @state() private _roomsError = "";
@@ -353,8 +360,8 @@ export class RoomMindPanel extends LitElement {
     const tabLabels: Record<TabId, string> = {
       areas: localize("panel.tab.rooms", l),
       analytics: localize("tabs.analytics", l),
-      schedules: localize("panel.tab.schedules", l),
       settings: localize("panel.tab.settings", l),
+      schedules: localize("weekly.title", l),
     };
 
     if (this._isEditing()) {
@@ -671,6 +678,7 @@ export class RoomMindPanel extends LitElement {
       const result = await this.hass.callWS<{
         rooms: Record<string, RoomConfig>;
         rooms_without_area?: RoomWithoutArea[];
+        reusable_schedules?: ScheduleChoice[];
         outdoor_temp?: number | null;
         vacation_active: boolean;
         vacation_temp: number | null;
@@ -701,6 +709,7 @@ export class RoomMindPanel extends LitElement {
       noteServerTime(result.server_time);
       this._rooms = result.rooms;
       this._roomsWithoutArea = result.rooms_without_area ?? [];
+      this._scheduleChoices = result.reusable_schedules ?? [];
       this._vacationActive = result.vacation_active ?? false;
       this._vacationTemp = result.vacation_temp ?? null;
       this._vacationUntil = result.vacation_until ?? null;

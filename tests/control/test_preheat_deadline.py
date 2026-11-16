@@ -92,7 +92,7 @@ def _clean_cache():
     clear_command_cache()
 
 
-def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
+def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float, preheat_minutes: int = 60):
     start = time.time()
 
     def resolve(ts: float) -> TargetTemps:
@@ -105,7 +105,7 @@ def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
     hass.states.get = MagicMock(return_value=state)
     ctrl = MPCController(
         hass,
-        make_room(climate_mode="heat_only", heating_system_type="radiator"),
+        make_room(climate_mode="heat_only", heating_system_type="radiator", preheat_max_minutes=preheat_minutes),
         model_manager=RoomModelManager(),
         outdoor_temp=0.0,
         settings={},
@@ -123,7 +123,7 @@ def _controller(monkeypatch, plan: MPCPlan, rise_after_s: float):
 def test_guard_looks_as_far_ahead_as_the_preheat(monkeypatch):
     """Room above the eco target, comfort 90 min out: the 30-min guard would cancel the pre-heat."""
     plan = MPCPlan(actions=[MODE_HEATING] * 24, temperatures=[18.0] * 25, power_fractions=[1.0] * 24, preheat_blocks=18)
-    ctrl = _controller(monkeypatch, plan, 90 * 60)
+    ctrl = _controller(monkeypatch, plan, 90 * 60, preheat_minutes=120)
     assert ctrl._evaluate_mpc(18.0, TargetTemps(17.5, None))[0] == MODE_HEATING
 
 
@@ -186,7 +186,7 @@ def test_room_switch_turns_the_preheat_lead_off():
     assert preheat_max_blocks(70, enabled=True) is None
 
 
-@pytest.mark.parametrize(("room_value", "expected"), [(False, 0), (True, None), ("missing", None)])
+@pytest.mark.parametrize(("room_value", "expected"), [(False, 0), (True, 12), ("missing", 12)])
 def test_controller_reads_the_room_switch(room_value, expected):
     room = make_room() if room_value == "missing" else make_room(preheat_enabled=room_value)
     ctrl = MPCController(

@@ -6,6 +6,7 @@ import type {
   RoomConfig,
   ClimateMode,
   ScheduleEntry,
+  ScheduleChoice,
   CoverScheduleEntry,
   DeviceConfig,
   DeviceType,
@@ -220,17 +221,18 @@ export class RsRoomDetail extends LitElement {
   /** All rooms, so the schedule lists can say where else a helper is used. */
   @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
   @property({ attribute: false }) public hass!: HomeAssistant;
+  @property({ attribute: false }) public scheduleChoices: ScheduleChoice[] = [];
   @property({ type: Boolean }) public presenceEnabled = false;
   /** A price source is set in the settings: shows the per-room price options. */
   @property({ type: Boolean }) public priceConfigured = false;
   @property({ attribute: false }) public presencePersons: string[] = [];
   @property({ type: Boolean }) public climateControlActive = true;
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   /** Global: what rooms do while their schedule is off / everybody is away. */
   @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
   @property({ type: String }) public presenceAwayAction: "eco" | "off" = "eco";
 
   @property({ type: Boolean }) public valveProtectionEnabled = false;
-  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   @property({ type: Boolean }) public coilDryEnabled = false;
   @property({ type: Number }) public coilDryMinutes = 20;
   @property({ type: String }) public coilDryMode = "fan_only";
@@ -242,6 +244,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _devices: DeviceConfig[] = [];
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
+  @state() private _dehumidifierPowerSensor = "";
+  @state() private _preheatMaxMinutes = 60;
   @state() private _selectedOccupancySensors: Set<string> = new Set();
   @state() private _occupancyEcoEnabled = false;
   @state() private _preheatEnabled = true;
@@ -290,6 +294,9 @@ export class RsRoomDetail extends LitElement {
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
   @state() private _heatSourceOrchestration = false;
+  @state() private _coolingInterlockEntities: string[] = [];
+  @state() private _coolingInterlockDelay = 300;
+  @state() private _coolingInterlockDeadband = 0.3;
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
@@ -975,6 +982,8 @@ export class RsRoomDetail extends LitElement {
             .editing=${true}
             .outdoor=${this._isOutdoor}
             .temperatureSensor=${this._selectedTempSensor}
+            .dehumidifierPowerSensor=${this._dehumidifierPowerSensor}
+            .preheatMaxMinutes=${this._preheatMaxMinutes}
             .humiditySensor=${this._selectedHumiditySensor}
             .occupancySensors=${this._selectedOccupancySensors}
             .occupancyEcoEnabled=${this._occupancyEcoEnabled}
@@ -1272,6 +1281,10 @@ export class RsRoomDetail extends LitElement {
     const { key, value } = e.detail;
     if (key === "temperature_sensor") {
       this._selectedTempSensor = value as string;
+    } else if (key === "dehumidifier_power_sensor") {
+      this._dehumidifierPowerSensor = value as string;
+    } else if (key === "preheat_max_minutes") {
+      this._preheatMaxMinutes = value as number;
     } else if (key === "humidity_sensor") {
       this._selectedHumiditySensor = value as string;
     } else if (key === "occupancy_sensors") {

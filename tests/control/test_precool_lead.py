@@ -26,7 +26,7 @@ def _closed_loop(monkeypatch, steps=36):
     hass.states.get = MagicMock(return_value=st)
     room = make_room(climate_mode="cool_only", thermostats=[], acs=["climate.ac"])
     mgr = RoomModelManager()
-    monkeypatch.setattr(mgr, "get_model", lambda _a: WEAK_AC)
+    monkeypatch.setattr(mgr, "get_model", lambda _a, *_selection: WEAK_AC)
 
     def resolver(ts):  # eco 27 °C, comfort 24 °C from +1 h
         return TargetTemps(heat=None, cool=27.0 if ts < START + 3600 else 24.0)
