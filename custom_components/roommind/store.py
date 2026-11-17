@@ -287,6 +287,7 @@ class RoomMindStore:
             "cooling_interlock_entities": config.get("cooling_interlock_entities", []),
             "cooling_interlock_delay": config.get("cooling_interlock_delay", 300),
             "cooling_interlock_deadband": config.get("cooling_interlock_deadband", 0.3),
+            "ac_off_peak_allow_radiators": config.get("ac_off_peak_allow_radiators", False),
             "schedules": config.get("schedules", []),
             "schedule_selector_entity": config.get("schedule_selector_entity", ""),
             "window_sensors": config.get("window_sensors", []),

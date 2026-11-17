@@ -584,6 +584,20 @@ export class RsSettings extends LitElement {
           ${Object.entries(this.rooms).filter(([, room]) => !room.is_outdoor).map(([areaId, room]) => html`
             <article class="settings-section">
               <h4>${room.display_name || this.hass.areas?.[areaId]?.name || areaId}</h4>
+              ${(room.devices ?? []).some((device) => device.type === "trv") &&
+              (room.devices ?? []).some((device) => device.type === "ac")
+                ? html`<label class="mods-room-toggle">
+                    <ha-switch
+                      .checked=${room.ac_off_peak_allow_radiators ?? false}
+                      @change=${(e: Event) =>
+                        this._saveRoomMod(areaId, {
+                          ac_off_peak_allow_radiators: (e.target as HTMLInputElement).checked,
+                        })}
+                    ></ha-switch>
+                    <span>${localize("mods.off_peak_both_sources", l)}</span>
+                  </label>
+                  <p class="mods-hint">${localize("mods.off_peak_both_sources_hint", l)}</p>`
+                : nothing}
               <ha-entity-picker .hass=${this.hass} .includeDomains=${["sensor"]}
                 .value=${room.dehumidifier_power_sensor ?? ""} allow-custom-entity
                 .label=${localize("learning.dehumidifier_power", l)}
@@ -1066,9 +1080,10 @@ export class RsSettings extends LitElement {
       .settings-section.first { border-top: 0; padding-top: 0; }
       .settings-section h3, .settings-section h4 { margin: 0 0 var(--rs-space-3); font-weight: 500; }
       .settings-section h4 { font-size: 16px; }
+      .mods-room-toggle { display: flex; align-items: center; gap: var(--rs-space-3); margin: var(--rs-space-3) 0; }
       .settings-section > ha-entity-picker,
       .settings-section > ha-textfield { display: block; margin: var(--rs-space-3) 0; }
-      .mods-hint { color: var(--secondary-text-color); font-size: 13px; line-height: 1.5; }
+      .mods-hint { color: var(--secondary-text-color); font-size: 13px; line-height: 1.5; margin: 0 0 var(--rs-space-3); }
 
       .page-head {
         display: flex;

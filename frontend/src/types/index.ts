@@ -177,6 +177,8 @@ export interface RoomConfig {
   cooling_interlock_entities?: string[];
   cooling_interlock_delay?: number;
   cooling_interlock_deadband?: number;
+  /** Keep radiator heat active alongside AC during off-peak AC heating. */
+  ac_off_peak_allow_radiators?: boolean;
   schedules: ScheduleEntry[];
   schedule_selector_entity: string;
   comfort_temp?: number;

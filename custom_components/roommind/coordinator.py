@@ -36,6 +36,7 @@ from .const import (
     HEATING_SYSTEM_RADIATOR,
     HISTORY_ROTATE_CYCLES,
     HISTORY_WRITE_CYCLES,
+    HEAT_SOURCE_SECONDARY_POWER_SCALE,
     MAX_PREDICTION_DELTA,
     MAX_SENSOR_STALENESS,
     MAX_TARGET_TEMP,
@@ -1255,6 +1256,27 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             or (room.get("heat_source_orchestration") and self._heat_source_states.get(area_id) == "secondary")
         ):
             selected_source = "ac"
+        if (
+            cheap_heating
+            and room.get("ac_off_peak_allow_radiators")
+            and not tariff.heating_locked
+            and get_trv_eids(room.get("devices", []))
+            and get_ac_eids(room.get("devices", []))
+            and any(
+                (state := self.hass.states.get(eid)) is not None and state.state not in ("unknown", "unavailable")
+                for eid in get_trv_eids(room.get("devices", []))
+            )
+            and any(
+                (state := self.hass.states.get(eid)) is not None and state.state not in ("unknown", "unavailable")
+                for eid in get_ac_eids(room.get("devices", []))
+            )
+            and check_acs_can_heat(self.hass, control_room)
+            and (
+                self.outdoor_temp_effective is None
+                or self.outdoor_temp_effective >= room.get("heat_source_ac_min_outdoor", -15)
+            )
+        ):
+            selected_source = "mixed"
         if selected_source == "ac" and get_trv_eids(room.get("devices", [])):
             available = any(
                 (state := self.hass.states.get(eid)) is not None and state.state not in ("unavailable", "unknown")
@@ -1544,6 +1566,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             tariff.heating_locked
             or tariff.boost_target is not None
             or (cheap_heating and room.get("climate_mode") == "heat_only")
+            or (cheap_heating and room.get("ac_off_peak_allow_radiators"))
         ):
             trvs = [
                 eid
@@ -1564,17 +1587,41 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 )
             )
             use_ac = bool((tariff.boost_target is not None or cheap_heating) and can_boost_ac and acs)
+            use_both = bool(
+                use_ac
+                and cheap_heating
+                and room.get("ac_off_peak_allow_radiators")
+                and trvs
+            )
             commands = [
-                DeviceCommand(eid, "primary", "thermostat", not use_ac, power_fraction if not use_ac else 0.0, "tariff")
+                DeviceCommand(
+                    eid,
+                    "primary",
+                    "thermostat",
+                    not use_ac or use_both,
+                    power_fraction if not use_ac or use_both else 0.0,
+                    "tariff",
+                )
                 for eid in trvs
             ]
             commands.extend(
-                DeviceCommand(eid, "secondary", "ac", use_ac, power_fraction if use_ac else 0.0, "tariff")
+                DeviceCommand(
+                    eid,
+                    "secondary",
+                    "ac",
+                    use_ac,
+                    round(power_fraction * HEAT_SOURCE_SECONDARY_POWER_SCALE, 2)
+                    if use_both
+                    else power_fraction
+                    if use_ac
+                    else 0.0,
+                    "tariff",
+                )
                 for eid in acs
             )
             heat_source_plan = HeatSourcePlan(
                 commands,
-                "secondary" if use_ac else "primary" if trvs else "none",
+                "both" if use_both else "secondary" if use_ac else "primary" if trvs else "none",
                 "off_peak_boost" if use_ac else "peak_tariff",
             )
             self._heat_source_states[area_id] = heat_source_plan.active_sources

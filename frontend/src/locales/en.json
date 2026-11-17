@@ -1319,6 +1319,8 @@
   "mods.cooling_delay": "Heating recovery delay (seconds)",
   "mods.cooling_deadband": "Heating recovery deadband (°C)",
   "mods.ac_energy_sensor": "AC cumulative energy sensor ({entity})",
+  "mods.off_peak_both_sources": "Keep radiator heat on with AC during off-peak hours",
+  "mods.off_peak_both_sources_hint": "Runs both heat sources when AC tariff heating is active. AC power is reduced while both are on.",
   "mods.summary_tariff": "AC heating tariff enabled",
   "mods.summary_boost": "Morning Boost · {count} rooms",
   "settings.summary.mods_none": "No mods configured",
