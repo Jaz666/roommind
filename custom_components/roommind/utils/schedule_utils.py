@@ -584,7 +584,7 @@ def make_target_resolver(
     climate_mode = room.get("climate_mode", "auto")
 
     converter: Callable[[float], float] | None = None
-    if hass is not None and not room.get("roommind_schedule_id"):
+    if hass is not None:
         from .temp_utils import ha_temp_to_celsius
 
         _hass = hass

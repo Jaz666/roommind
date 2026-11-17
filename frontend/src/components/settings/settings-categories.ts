@@ -16,6 +16,7 @@ export type SettingsCategoryId =
   | "mold"
   | "valve"
   | "compressor"
+  | "mods"
   | "coil_dry"
   | "notifications"
   | "reset";
@@ -98,6 +99,19 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ],
   },
   {
+    label: "settings.group.more",
+    categories: [
+      {
+        id: "mods",
+        icon: "mdi:puzzle-outline",
+        title: "mods.title",
+        intro: "mods.intro",
+      },
+      { id: "notifications", icon: "mdi:bell-outline", title: "notifications.title", intro: "settings.intro.notifications" },
+      { id: "reset", icon: "mdi:restart", title: "settings.reset_title", intro: "settings.intro.reset" },
+    ],
+  },
+  {
     label: "settings.group.protection",
     categories: [
       { id: "mold", icon: "mdi:water-alert", title: "mold.title", intro: "settings.intro.mold" },
@@ -118,23 +132,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         icon: "mdi:air-filter",
         title: "coil_dry.title",
         intro: "settings.intro.coil_dry",
-      },
-    ],
-  },
-  {
-    label: "settings.group.more",
-    categories: [
-      {
-        id: "notifications",
-        icon: "mdi:bell-outline",
-        title: "notifications.title",
-        intro: "settings.intro.notifications",
-      },
-      {
-        id: "reset",
-        icon: "mdi:restart",
-        title: "settings.reset_title",
-        intro: "settings.intro.reset",
       },
     ],
   },

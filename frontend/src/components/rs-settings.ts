@@ -87,6 +87,15 @@ const SETTINGS: [keyof GlobalSettings, SettingSync][] = [
   ["group_by_floor", plain("groupByFloor", false)],
   ["climate_control_active", plain("climateControlActive", true)],
   ["learning_disabled_rooms", plain("learningDisabledRooms", [])],
+  ["heat_pump_power_sensor", plain("heatPumpPowerSensor", "")],
+  ["heat_pump_active_watts", plain("heatPumpActiveWatts", 150)],
+  ["ac_tariff_enabled", plain("acTariffEnabled", false)],
+  ["ac_off_peak_start", plain("acOffPeakStart", "00:00")],
+  ["ac_off_peak_end", plain("acOffPeakEnd", "05:00")],
+  ["ac_morning_boost_enabled", plain("acMorningBoostEnabled", false)],
+  ["ac_morning_boost_minutes", plain("acMorningBoostMinutes", 30)],
+  ["ac_morning_boost_stop_margin", plain("acMorningBoostStopMargin", 0.2)],
+  ["ac_morning_boost_rooms", plain("acMorningBoostRooms", [])],
   ["outdoor_temp_sensor", plain("outdoorTempSensor", "")],
   ["price_entity", plain("priceEntity", "")],
   ["outdoor_humidity_sensor", plain("outdoorHumiditySensor", "")],
@@ -201,6 +210,13 @@ export class RsSettings extends LitElement {
   @state() private _learningDisabledRooms: string[] = [];
   @state() private _heatPumpPowerSensor = "";
   @state() private _heatPumpActiveWatts = 150;
+  @state() private _acTariffEnabled = false;
+  @state() private _acOffPeakStart = "00:00";
+  @state() private _acOffPeakEnd = "05:00";
+  @state() private _acMorningBoostEnabled = false;
+  @state() private _acMorningBoostMinutes = 30;
+  @state() private _acMorningBoostStopMargin = 0.2;
+  @state() private _acMorningBoostRooms: string[] = [];
   @state() private _outdoorTempSensor = "";
   @state() private _priceEntity = "";
   @state() private _outdoorHumiditySensor = "";
@@ -463,6 +479,7 @@ export class RsSettings extends LitElement {
   }
 
   private _renderPanel(id: SettingsCategoryId) {
+    const l = this.hass.language;
     switch (id) {
       case "orphans":
         return html`<rs-settings-orphans
@@ -482,8 +499,6 @@ export class RsSettings extends LitElement {
       case "sensors":
         return html`<rs-settings-sensors
           .hass=${this.hass}
-          .heatPumpPowerSensor=${this._heatPumpPowerSensor}
-          .heatPumpActiveWatts=${this._heatPumpActiveWatts}
           .outdoorTempSensor=${this._outdoorTempSensor}
           .outdoorHumiditySensor=${this._outdoorHumiditySensor}
           .weatherEntity=${this._weatherEntity}
@@ -533,11 +548,69 @@ export class RsSettings extends LitElement {
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-valve>`;
       case "compressor":
-        return html`<rs-settings-compressor
-          .hass=${this.hass}
-          .compressorGroups=${this._compressorGroups}
-          @setting-changed=${this._onSettingChanged}
-        ></rs-settings-compressor>`;
+        return html`<rs-settings-compressor .hass=${this.hass} .compressorGroups=${this._compressorGroups}
+          @setting-changed=${this._onSettingChanged}></rs-settings-compressor>`;
+      case "mods":
+        return html`<section class="settings-section first">
+          <h3>${localize("mods.heat_pump", l)}</h3>
+          <ha-entity-picker .hass=${this.hass} .value=${this._heatPumpPowerSensor}
+            .includeDomains=${["sensor"]} allow-custom-entity
+            .label=${localize("learning.heat_pump_power", l)}
+            @value-changed=${(e: CustomEvent) => this._changeSetting("heatPumpPowerSensor", e.detail?.value ?? "")}></ha-entity-picker>
+          <p class="mods-hint">${localize("learning.heat_pump_hint", l)}</p>
+          <ha-textfield type="number" min="10" max="10000"
+            .label=${localize("learning.active_watts", l)} .value=${String(this._heatPumpActiveWatts)}
+            @change=${(e: Event) => this._changeSetting("heatPumpActiveWatts", Number((e.target as HTMLInputElement).value))}></ha-textfield>
+        </section>
+        <section class="settings-section">
+          <h3>${localize("mods.tariff", l)}</h3>
+          <rs-settings-tariff .hass=${this.hass}
+            .acTariffEnabled=${this._acTariffEnabled}
+            .acOffPeakStart=${this._acOffPeakStart} .acOffPeakEnd=${this._acOffPeakEnd}
+            .rooms=${this.rooms}
+            .acMorningBoostEnabled=${this._acMorningBoostEnabled}
+            .acMorningBoostMinutes=${this._acMorningBoostMinutes}
+            .acMorningBoostStopMargin=${this._acMorningBoostStopMargin}
+            .acMorningBoostRooms=${this._acMorningBoostRooms}
+            @setting-changed=${this._onSettingChanged}></rs-settings-tariff>
+        </section>
+        <section class="settings-section">
+          <h3>${localize("mods.shared_ac", l)}</h3>
+          <rs-settings-compressor .hass=${this.hass} .compressorGroups=${this._compressorGroups}
+            .modsOnly=${true} @setting-changed=${this._onSettingChanged}></rs-settings-compressor>
+        </section>
+        <section class="settings-section">
+          <h3>${localize("mods.room_options", l)}</h3>
+          ${Object.entries(this.rooms).filter(([, room]) => !room.is_outdoor).map(([areaId, room]) => html`
+            <article class="settings-section">
+              <h4>${room.display_name || this.hass.areas?.[areaId]?.name || areaId}</h4>
+              <ha-entity-picker .hass=${this.hass} .includeDomains=${["sensor"]}
+                .value=${room.dehumidifier_power_sensor ?? ""} allow-custom-entity
+                .label=${localize("learning.dehumidifier_power", l)}
+                @value-changed=${(e: CustomEvent) => this._saveRoomMod(areaId, { dehumidifier_power_sensor: e.detail?.value ?? "" })}></ha-entity-picker>
+              <p class="mods-hint">${localize("learning.dehumidifier_hint", l)}</p>
+              <ha-textfield .label=${localize("mods.cooling_entities", l)}
+                .value=${(room.cooling_interlock_entities ?? []).join(", ")}
+                @change=${(e: Event) => this._saveRoomMod(areaId, { cooling_interlock_entities: (e.target as HTMLInputElement).value.split(",").map((v) => v.trim()).filter(Boolean) })}></ha-textfield>
+              <div class="threshold-grid">
+                <ha-textfield type="number" min="0" max="3600" .label=${localize("mods.cooling_delay", l)}
+                  .value=${String(room.cooling_interlock_delay ?? 300)}
+                  @change=${(e: Event) => this._saveRoomMod(areaId, { cooling_interlock_delay: Number((e.target as HTMLInputElement).value) })}></ha-textfield>
+                <ha-textfield type="number" min="0" max="2" step="0.1" .label=${localize("mods.cooling_deadband", l)}
+                  .value=${String(room.cooling_interlock_deadband ?? 0.3)}
+                  @change=${(e: Event) => this._saveRoomMod(areaId, { cooling_interlock_deadband: Number((e.target as HTMLInputElement).value) })}></ha-textfield>
+              </div>
+              ${(room.devices ?? []).filter((d) => d.type === "ac").map((device, index) => html`
+                <ha-entity-picker .hass=${this.hass} .includeDomains=${["sensor"]}
+                  .value=${device.energy_sensor ?? ""} allow-custom-entity
+                  .label=${localize("mods.ac_energy_sensor", l, { entity: device.entity_id })}
+                  @value-changed=${(e: CustomEvent) => {
+                    const devices = [...(room.devices ?? [])];
+                    devices[index] = { ...devices[index], energy_sensor: e.detail?.value ?? "" };
+                    this._saveRoomMod(areaId, { devices });
+                  }}></ha-entity-picker>`)}
+            </article>`)}
+        </section>`;
       case "coil_dry":
         return html`<rs-settings-coil-dry
           .hass=${this.hass}
@@ -762,12 +835,20 @@ export class RsSettings extends LitElement {
             localize(groups === 1 ? "settings.summary.groups_one" : "settings.summary.groups", l, {
               count: count(groups),
             }),
-            localize(
-              devices === 1 ? "settings.summary.devices_one" : "settings.summary.devices",
-              l,
-              { count: count(devices) },
-            ),
+            localize(devices === 1 ? "settings.summary.devices_one" : "settings.summary.devices", l, {
+              count: count(devices),
+            }),
           ].join(" · "),
+        };
+      }
+      case "mods": {
+        const parts: string[] = [];
+        if (this._acTariffEnabled) parts.push(localize("mods.summary_tariff", l));
+        if (this._acMorningBoostEnabled) {
+          parts.push(localize("mods.summary_boost", l, { count: count(this._acMorningBoostRooms.length) }));
+        }
+        return {
+          text: parts.length ? parts.join(" · ") : localize("settings.summary.mods_none", l),
         };
       }
       case "coil_dry":
@@ -839,6 +920,23 @@ export class RsSettings extends LitElement {
     this._setFields({ [key]: value });
     this._dirty.set(key, ++this._revision);
     this._autoSave();
+  }
+
+  private _changeSetting(key: string, value: unknown) {
+    this._setFields({ [key]: value });
+    this._dirty.set(key, ++this._revision);
+    this._autoSave();
+  }
+
+  private async _saveRoomMod(areaId: string, changes: Record<string, unknown>) {
+    try {
+      await this.hass.callWS({ type: "roommind/rooms/save", area_id: areaId, ...changes });
+      fireSaveStatus(this, "saved");
+    } catch (err) {
+      const l = this.hass.language;
+      this._saveError = errorText(err, localize("error.unknown", l), l);
+      fireSaveStatus(this, "error");
+    }
   }
 
   /**
@@ -960,6 +1058,17 @@ export class RsSettings extends LitElement {
       .page {
         min-width: 0;
       }
+
+      .settings-section {
+        padding: var(--rs-space-4) 0;
+        border-top: 1px solid var(--divider-color);
+      }
+      .settings-section.first { border-top: 0; padding-top: 0; }
+      .settings-section h3, .settings-section h4 { margin: 0 0 var(--rs-space-3); font-weight: 500; }
+      .settings-section h4 { font-size: 16px; }
+      .settings-section > ha-entity-picker,
+      .settings-section > ha-textfield { display: block; margin: var(--rs-space-3) 0; }
+      .mods-hint { color: var(--secondary-text-color); font-size: 13px; line-height: 1.5; }
 
       .page-head {
         display: flex;

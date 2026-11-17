@@ -1,15 +1,9 @@
 """Source separation, migration and setback protection against weak learned heating."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from custom_components.roommind.const import TargetTemps
-from custom_components.roommind.control.mpc_controller import MPCController
 from custom_components.roommind.control.thermal_model import RCModel, RoomModelManager, ThermalEKF
 from custom_components.roommind.managers.ekf_training_manager import EkfTrainingManager
-
-from .conftest import build_hass, make_room
 
 
 def test_sources_learn_independently_with_shared_room_physics():
@@ -97,33 +91,6 @@ def test_source_switch_discards_straddling_training_batch():
     trainer.process(**args, heating_source="ac")
     assert not trainer._accumulated_dt
     assert models.get_n_observations("room") == 0
-
-
-@pytest.mark.parametrize("hours,limit", [(2, 60), (6, 60), (8, 60), (0.25, 0)])
-def test_weak_living_room_model_cannot_preheat_all_night(monkeypatch, hours, limit):
-    models = RoomModelManager()
-    est = models.get_estimator("living_room")
-    est._x[1], est._x[2] = 0.016122, 0.22695
-    now = 1000000
-    monkeypatch.setattr("custom_components.roommind.control.mpc_controller.time.time", lambda: now)
-    room = make_room(climate_mode="heat_only", heating_system_type="radiator", preheat_max_minutes=limit)
-    hass = build_hass()
-    state = MagicMock()
-    state.state = "heat"
-    state.attributes = {"hvac_modes": ["heat", "off"]}
-    hass.states.get.return_value = state
-    controller = MPCController(
-        hass,
-        room,
-        model_manager=models,
-        outdoor_temp=7.6,
-        settings={"comfort_weight": 60},
-        heating_system_type="radiator",
-        target_resolver=lambda ts: TargetTemps(21 if ts >= now + hours * 3600 else 19, None),
-    )
-    mode, power = controller._evaluate_mpc(20.43, TargetTemps(19, None))
-    assert (mode, power) == ("idle", 0)
-    assert controller.direct_target("heating", 19) == 19
 
 
 def test_dehumidifier_gain_reduces_required_heating_and_warms_idle_prediction():

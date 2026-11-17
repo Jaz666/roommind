@@ -3519,13 +3519,12 @@ async def test_source_learning_configuration_round_trip(ws_hass, store, connecti
             "area_id": "living",
             "temperature_sensor": "sensor.room",
             "dehumidifier_power_sensor": "sensor.dehum",
-            "preheat_max_minutes": 45,
             "devices": [{"entity_id": "climate.ac", "type": "ac", "energy_sensor": "sensor.ac_energy"}],
         },
     )
     saved = store.get_room("living")
     assert saved["dehumidifier_power_sensor"] == "sensor.dehum"
-    assert saved["preheat_max_minutes"] == 45
+    assert "preheat_max_minutes" not in saved
 
 
 def test_setback_auto_off_schema_has_no_default():

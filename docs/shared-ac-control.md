@@ -152,7 +152,7 @@ tests, not household comfort targets.
 
 ## Toshiba idle units during AC heating (1.8.0b3)
 
-Under **Settings → Compressor groups**, expand the shared outdoor-unit group and
+Under **Settings → Mods → Compressor groups**, expand the shared outdoor-unit group and
 set **Idle units while another room needs AC heat**:
 
 - **Off** (default): turn idle, controlled units off before starting a requesting
@@ -161,8 +161,8 @@ set **Idle units while another room needs AC heat**:
 - **Minimum Heat**: set idle, controlled units to Heat at each entity's reported
   minimum setpoint. This may release a small amount of unwanted warmth.
 
-This applies whenever the shared group has permitted AC heating demand, including
-normal cheap-rate heating and morning boost. It does not bypass peak lockout,
+This applies whenever the shared group has permitted AC heating demand during
+off-peak hours. It does not bypass peak lockout,
 unknown/external-unit protection, open-window stops, or disabled room control.
 An invalid/missing minimum temperature falls back to Off. When heating demand ends,
 the normal per-device idle behaviour resumes subject to existing changeover and
@@ -178,5 +178,3 @@ Minimum Heat sets the minimum target first, then explicitly selects Heat. Toshib
 ignores the optional `hvac_mode` argument of a temperature-only service call; the
 separate mode command is required to leave Off or Fan Only. Already-correct units
 are not repeatedly commanded. Off policy and all existing lockouts are unchanged.
-
-During morning boost, a room that reaches its target uses the group’s idle heating choice while another room still requests AC heat. Minimum Heat holds its indoor unit at its reported minimum heating setpoint; Off keeps it off. Its individual When idle setting resumes after shared heating ends. Reaching the boost target does not repeatedly switch the unit between Heat and Fan Only. Peak-rate lockout and explicit shutdown still take priority.

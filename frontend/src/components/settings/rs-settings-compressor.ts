@@ -40,6 +40,7 @@ export function compressorGroupProblem(
 export class RsSettingsCompressor extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Array }) public compressorGroups: CompressorGroup[] = [];
+  @property({ type: Boolean }) public modsOnly = false;
 
   static styles = [
     ...RsSettingsBase.settingsBaseStyles,
@@ -72,6 +73,8 @@ export class RsSettingsCompressor extends RsSettingsBase {
         line-height: 1.4;
         color: var(--secondary-text-color);
       }
+      .member-checks { display: flex; flex-wrap: wrap; gap: var(--rs-space-3); }
+      .member-checks label { display: flex; align-items: center; gap: var(--rs-space-1); }
       .group .rs-alert {
         margin: 0;
       }
@@ -85,19 +88,66 @@ export class RsSettingsCompressor extends RsSettingsBase {
   render() {
     const l = this.hass.language;
     const groups = this.compressorGroups;
+    if (this.modsOnly && !groups.length) {
+      return html`<p class="field-hint">${localize("mods.shared_ac_hint", l)}</p>`;
+    }
     return html`
-      ${groups.map((group, idx) => this._renderGroup(group, idx))}
-      <div class="settings-section ${groups.length ? "" : "first"}">
-        <rs-list-row
-          clickable
-          plain-icon
-          variant="primary"
-          icon="mdi:plus"
+      ${groups.map((group, idx) => this.modsOnly ? this._renderSharedGroup(group, idx) : this._renderGroup(group, idx))}
+      ${!this.modsOnly ? html`<div class="settings-section ${groups.length ? "" : "first"}">
+        <rs-list-row clickable plain-icon variant="primary" icon="mdi:plus"
           .heading=${localize("compressor.add_group", l)}
           .secondary=${groups.length ? "" : localize("compressor.no_groups", l)}
-          @row-click=${this._addGroup}
-        ></rs-list-row>
-      </div>
+          @row-click=${this._addGroup}></rs-list-row>
+      </div>` : nothing}
+    `;
+  }
+
+  private _renderSharedGroup(group: CompressorGroup, idx: number) {
+    const l = this.hass.language;
+    const label = group.name || `#${idx + 1}`;
+    return html`<section class="settings-section group ${idx === 0 ? "first" : ""}" aria-label=${label}>
+      <span class="field-label">${label}</span>
+      ${this._renderSharedControls(group, idx)}
+    </section>`;
+  }
+
+  private _renderSharedControls(group: CompressorGroup, idx: number) {
+    const l = this.hass.language;
+    return html`
+      <rs-list-row switch wrap .heading=${localize("shared_ac.enabled", l)}
+        .secondary=${localize("shared_ac.enabled_hint", l)} .checked=${group.shared_ac_control || false}
+        @toggle-changed=${(e: CustomEvent<boolean>) => this._updateGroup(idx, "shared_ac_control", e.detail)}
+      ></rs-list-row>
+      ${group.shared_ac_control ? html`
+        <ha-select .label=${localize("shared_ac.heating_idle_mode", l)} .value=${group.heating_idle_mode || "off"}
+          .options=${[
+            { value: "off", label: localize("shared_ac.idle_off", l) },
+            { value: "minimum_heat", label: localize("shared_ac.idle_minimum_heat", l) },
+          ]}
+          @selected=${(e: Event) => { const v = getSelectValue(e); if (v) this._updateGroup(idx, "heating_idle_mode", v); }}
+          @closed=${(e: Event) => e.stopPropagation()} fixedMenuPosition></ha-select>
+        <span class="field-hint">${localize("shared_ac.heating_idle_hint", l)}</span>
+        <span class="field-label">${localize("shared_ac.night_priority", l)}</span>
+        <div class="member-checks">
+          ${group.members.filter((eid) => Array.isArray(this.hass.states[eid]?.attributes?.hvac_modes)).map((eid) => html`
+            <label><input type="checkbox" .checked=${(group.night_cooling_members || []).includes(eid)}
+              @change=${(e: Event) => {
+                const selected = new Set(group.night_cooling_members || []);
+                (e.target as HTMLInputElement).checked ? selected.add(eid) : selected.delete(eid);
+                this._updateGroup(idx, "night_cooling_members", [...selected]);
+              }} />${this.hass.states[eid]?.attributes?.friendly_name || eid}</label>`)}
+        </div>
+        <ha-select .label=${localize("compressor.conflict_resolution", l)} .value=${group.conflict_resolution || "heating_priority"}
+          .options=${[
+            { value: "heating_priority", label: localize("compressor.conflict_heating_priority", l) },
+            { value: "cooling_priority", label: localize("compressor.conflict_cooling_priority", l) },
+            { value: "majority", label: localize("compressor.conflict_majority", l) },
+            { value: "outdoor_temp", label: localize("compressor.conflict_outdoor_temp", l) },
+          ]}
+          @selected=${(e: Event) => { const v = getSelectValue(e); if (v) this._updateGroup(idx, "conflict_resolution", v); }}
+          @closed=${(e: Event) => e.stopPropagation()} fixedMenuPosition></ha-select>
+        <span class="field-hint">${localize("compressor.conflict_resolution_hint", l)}</span>
+      ` : nothing}
     `;
   }
 
@@ -187,44 +237,7 @@ export class RsSettingsCompressor extends RsSettingsBase {
           }}
         ></rs-list-row>
 
-        ${
-          group.shared_ac_control
-            ? html`
-                <ha-select
-                  .label=${localize("compressor.conflict_resolution", l)}
-                  .value=${group.conflict_resolution || "heating_priority"}
-                  .options=${[
-                    {
-                      value: "heating_priority",
-                      label: localize("compressor.conflict_heating_priority", l),
-                    },
-                    {
-                      value: "cooling_priority",
-                      label: localize("compressor.conflict_cooling_priority", l),
-                    },
-                    {
-                      value: "majority",
-                      label: localize("compressor.conflict_majority", l),
-                    },
-                    {
-                      value: "outdoor_temp",
-                      label: localize("compressor.conflict_outdoor_temp", l),
-                    },
-                  ]}
-                  @selected=${(e: Event) => {
-                    const v = getSelectValue(e);
-                    if (v) this._updateGroup(idx, "conflict_resolution", v);
-                  }}
-                  @closed=${(e: Event) => e.stopPropagation()}
-                  fixedMenuPosition
-                >
-                </ha-select>
-                <span class="field-hint">
-                  ${localize("compressor.conflict_resolution_hint", l)}
-                </span>
-              `
-            : nothing
-        }
+        ${this._renderSharedControls(group, idx)}
 
         <ha-entity-picker
           .hass=${this.hass}

@@ -44,8 +44,6 @@ export class RsSensorSection extends LitElement {
   @property({ attribute: false }) public area!: HassArea;
   @property({ type: String }) public temperatureSensor = "";
   @property({ type: String }) public humiditySensor = "";
-  @property({ type: String }) public dehumidifierPowerSensor = "";
-  @property({ type: Number }) public preheatMaxMinutes = 60;
   @property({ attribute: false }) public occupancySensors: Set<string> = new Set();
   @property({ type: Boolean }) public occupancyEcoEnabled = false;
   @property({ type: Number }) public occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
@@ -120,31 +118,7 @@ export class RsSensorSection extends LitElement {
     if (!this.editing) {
       return this._renderViewMode();
     }
-    return html`${this._renderEditMode()}
-      <div class="sensor-block">
-        <ha-entity-picker
-          .hass=${this.hass}
-          .includeDomains=${["sensor"]}
-          .value=${this.dehumidifierPowerSensor}
-          .label=${localize("learning.dehumidifier_power", this.language)}
-          allow-custom-entity
-          @value-changed=${(e: CustomEvent) => this._fireLearningChanged("dehumidifier_power_sensor", e.detail?.value ?? "")}
-        ></ha-entity-picker>
-        <p>${localize("learning.dehumidifier_hint", this.language)}</p>
-        <ha-textfield
-          type="number"
-          min="0"
-          max="720"
-          .label=${localize("learning.preheat_limit", this.language)}
-          .value=${String(this.preheatMaxMinutes)}
-          @change=${(e: Event) => {
-            const v = Number((e.target as HTMLInputElement).value);
-            if (Number.isFinite(v) && v >= 0 && v <= 720)
-              this._fireLearningChanged("preheat_max_minutes", v);
-          }}
-        ></ha-textfield>
-        <p>${localize("learning.preheat_hint", this.language)}</p>
-      </div>`;
+    return this._renderEditMode();
   }
 
   // ─── View mode ───

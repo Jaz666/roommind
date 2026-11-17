@@ -69,7 +69,7 @@ from ..utils.device_utils import (
 )
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
 from .direct_valve import async_release_valve, async_set_valve, clear_valve_cache
-from .mpc_optimizer import MPCOptimizer, MPCPlan, room_preheat_blocks, slow_start_penalty
+from .mpc_optimizer import MPCOptimizer, MPCPlan, preheat_max_blocks, slow_start_penalty
 from .residual_heat import get_min_run_blocks, heat_min_run_blocks, mean_rebound
 from .thermal_model import RoomModelManager
 
@@ -1487,7 +1487,7 @@ class MPCController:
         cw = s.get("comfort_weight", 70)
         self._w_comfort = max(1.0, cw / 10.0)
         self._w_energy = max(1.0, (100 - cw) / 10.0)
-        self._preheat_max_blocks = room_preheat_blocks(cw, room_config, heating_system_type)
+        self._preheat_max_blocks = preheat_max_blocks(cw, enabled=room_config.get("preheat_enabled", True))
         self._approach_rate = min(1.0, APPROACH_RATE_MIN + (1.0 - APPROACH_RATE_MIN) * cw / DEFAULT_COMFORT_WEIGHT)
         self._valve_modulating = is_valve_modulating(
             self._devices, check_acs_can_heat(hass, room_config), self.has_external_sensor

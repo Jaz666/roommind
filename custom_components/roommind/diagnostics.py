@@ -352,9 +352,6 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
             }
             if blocks:
                 room_diag["schedule_blocks"] = blocks
-            reusable = store.get_schedules().get(config.get("roommind_schedule_id", ""))
-            if reusable:
-                room_diag["roommind_schedule"] = _plain(reusable)
 
         # Window manager state
         if coordinator:

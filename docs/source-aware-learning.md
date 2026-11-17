@@ -2,11 +2,10 @@
 
 ## Heating rules
 
-With the AC tariff enabled, Heat Only rooms may use their ACs throughout the configured cheap period (00:00–05:00 GMT by default), even without heat-source orchestration. In mixed radiator/AC Heat Only rooms, cheap-rate heating prefers an available AC above its configured minimum outdoor temperature; radiators remain the fallback. AC-only rooms retain AC heating. Auto rooms keep their normal source selection outside the explicit morning boost.
+With the AC tariff enabled, Heat Only rooms may use their ACs throughout the configured cheap period (00:00–05:00 GMT by default), even without heat-source orchestration. In mixed radiator/AC Heat Only rooms, cheap-rate heating prefers an available AC above its configured minimum outdoor temperature; radiators remain the fallback. AC-only rooms retain AC heating. Auto rooms keep their normal source selection outside this policy.
 
 At peak rate, AC heating is blocked. Radiators may still heat, and an AC configured to idle in Fan Only keeps its selected fan speed. The block overrides compressor minimum-run holds. Heat Only does not permit cooling. Auto still permits cooling, with the shared-outdoor-unit direction and radiator cooling protections unchanged.
 
-Morning boost is separate: in its configured preparation window it uses the upcoming scheduled heating target, without the old extra +3°C bias, and retains the existing stop margin and cooling handover band.
 
 ## Learning and migration
 
@@ -28,18 +27,12 @@ Changing the selected temperature sensor through RoomMind resets only that room'
 - This is still a single-temperature room model. It separates heating strengths, not full independent radiator/AC warm-up or transport-delay models. Existing residual-heat and AC cooling-rebound handling remains approximate when sources change.
 - Forecasts assume the current auxiliary power continues; they do not predict the dehumidifier's future humidistat cycles.
 
-## Preventing all-night preheating
-
-Room → Sensors → **Maximum predictive preheating (minutes)** defaults to 60 for fast heating systems (radiators/AC) and 720 for underfloor heating. Set it to 0 to disable schedule anticipation. The comfort/efficiency slider can shorten this maximum. The limit also bounds the predictive guard/lead targets, so an implausibly weak learned heater cannot send tomorrow's comfort setpoint all night. The same limit is used in analytics forecasts.
-
-The separate, explicitly configured morning boost can still advance the target in its own preparation window. Current scheduled heating demand is unaffected.
-
 ## Connect this household's sensors
 
 After installing and restarting Home Assistant, refresh the RoomMind browser panel.
 
-1. Settings → Sensors & data sources: select **Whole heat pump power sensor (W)** = `sensor.heat_pump_consumption_power`. Start with the default 150 W activity threshold, then compare it with the CT reading while all units are in Fan Only and adjust if necessary.
-2. In each room's Devices editor, expand its AC and select **AC energy sensor (Wh or kWh)**:
+1. Settings → Mods: select **Whole heat pump power sensor (W)** = `sensor.heat_pump_consumption_power`. Start with the default 150 W activity threshold, then compare it with the CT reading while all units are in Fan Only and adjust if necessary.
+2. Settings → Mods → Room-specific options: select each room's **AC cumulative energy sensor**:
 
    | AC | Energy sensor |
    | --- | --- |
@@ -48,9 +41,9 @@ After installing and restarting Home Assistant, refresh the RoomMind browser pan
    | `climate.ac_alex` | `sensor.ac_alex_power_consumption` |
    | `climate.ac_amber` | `sensor.ac_amber_power_consumption` |
 
-3. Living Room → Sensors: set **Dehumidifier power sensor** to `sensor.living_room_dehumidifier_current_consumption`. Its virtual humidistat and switch remain independently controlled. An unavailable configured reading pauses thermal learning; it does not switch humidity control or room heating off.
+3. Settings → Mods → Room-specific options: set the Living Room **Dehumidifier power sensor** to `sensor.living_room_dehumidifier_current_consumption`. Its virtual humidistat and switch remain independently controlled. An unavailable configured reading pauses thermal learning; it does not switch humidity control or room heating off.
 4. Keep AC idle action **Fan Only** and choose the desired speed, including Quiet where supported.
-5. Keep the tariff enabled and rooms in Heat Only if automatic cooling is unwanted. Start with the 60-minute predictive maximum and the existing 30-minute morning boost.
+5. Enable the tariff lockout under Settings → Mods if AC heating should be blocked during peak-rate hours.
 
 Entity IDs are configuration, not hardcoded into the integration. These settings are not applied to a live Home Assistant instance by building or installing the release.
 
@@ -59,7 +52,6 @@ Entity IDs are configuration, not hardcoded into the integration. These settings
 - At cheap rate, request heat below the room's measured temperature only if testing idle; request a higher target to test AC heating. Verify the AC selects Heat and the radiator is parked.
 - At peak, request heating: the radiator should heat, the AC should remain Fan Only, and the room should report the peak AC heating lock.
 - In Heat Only, a low override must not start cooling.
-- During the overnight setback, a morning target more than the configured predictive maximum away must not keep Tado at that future target plus its offset.
 - Confirm the dehumidifier's W reading is available and watch separate source sample counts grow over clean heating periods. An AC strength remaining unlearned can mean insufficient energy evidence; it is not proof of a broken heater.
 
 Rollback: install 1.8.0b1 and restart HA. Its reader can load the preserved legacy state layout, but cannot use the new source coefficients. Restore a pre-upgrade HA backup for an exact restoration of earlier learning and settings.

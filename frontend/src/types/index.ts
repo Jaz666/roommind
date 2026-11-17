@@ -14,26 +14,6 @@ export interface NotificationTarget {
   notify_when: "always" | "home_only";
 }
 
-export interface WeeklyBlock {
-  from: string;
-  to: string;
-  data: { heat_temperature: number; cool_temperature: number };
-}
-export interface ScheduleChoice {
-  id: string;
-  name: string;
-}
-export interface ReusableSchedule extends ScheduleChoice {
-  revision: number;
-  days: Record<string, WeeklyBlock[]>;
-  area_ids: string[];
-}
-export interface ScheduleSummary extends ScheduleChoice {
-  targets: WeeklyBlock["data"] | null;
-  next_change: number | null;
-  next_targets: WeeklyBlock["data"] | null;
-}
-
 export interface ScheduleEntry {
   entity_id: string;
 }
@@ -175,7 +155,6 @@ export interface RoomConfig {
   dehumidifier_power_sensor?: string;
   dehumidifier_entity?: string;
   dehumidifier_switch?: string;
-  preheat_max_minutes?: number;
   occupancy_sensors?: string[];
   occupancy_eco_enabled?: boolean;
   occupancy_eco_delay?: number;
@@ -199,9 +178,6 @@ export interface RoomConfig {
   cooling_interlock_delay?: number;
   cooling_interlock_deadband?: number;
   schedules: ScheduleEntry[];
-  roommind_schedule_id?: string;
-  roommind_schedule?: ScheduleSummary | null;
-  roommind_schedule_missing?: boolean;
   schedule_selector_entity: string;
   comfort_temp?: number;
   eco_temp?: number;
@@ -265,7 +241,6 @@ export interface GlobalSettings {
   ac_off_peak_end?: string;
   ac_morning_boost_enabled?: boolean;
   ac_morning_boost_minutes?: number;
-  ac_morning_boost_offset?: number; // Legacy setting; no extra morning AC bias.
   ac_morning_boost_stop_margin?: number;
   ac_morning_boost_rooms?: string[];
   outdoor_temp_sensor: string;

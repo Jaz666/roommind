@@ -1,13 +1,13 @@
-# Personal release 2.1.0 — installation and rollback
+# Personal release 2.2.0 — installation and rollback
 
-This personal release brings the household features from the cooling-interlock branch onto RoomMind 2.0.0. It includes room heating protection while an AC is cooling, tariff-based AC heating lockout, shared Toshiba outdoor-unit coordination, per-device Morning Boost setpoint behavior, reusable schedules, and source-aware learning for ACs and the Living Room dehumidifier. Existing RoomMind rooms and their HA schedules remain in place; reusable schedules are an additional option.
+This personal release updates the cooling-interlock fork to upstream RoomMind 2.0 and keeps the household-specific controls. It includes room heating protection while an AC is cooling, tariff-based AC heating lockout and AC Morning Boost, shared Toshiba outdoor-unit coordination, and source-aware learning for ACs and the Living Room dehumidifier. The custom scheduler and custom predictive-preheat limit have been removed; Home Assistant schedules and RoomMind's standard predictive preheat remain.
 
-Read the setup notes for [cooling interlock](cooling-interlock.md), [tariff controls](heating-tariff.md), [shared AC control](shared-ac-control.md), [reusable schedules](reusable-schedules.md), and [source-aware learning](source-aware-learning.md). Configure the sensors and tariff settings explicitly; installing this release does not select entities or change the boiler's manually configured maximum flow temperature.
+Read the setup notes for [cooling interlock](cooling-interlock.md), [tariff controls](heating-tariff.md), [shared AC control](shared-ac-control.md), and [source-aware learning](source-aware-learning.md). Configure the sensors and tariff settings explicitly; installing this release does not select entities or change the boiler's manually configured maximum flow temperature.
 
 ## Install
 
 1. Make a Home Assistant backup and download it. Record your current version.
-2. In HACS, keep **Jaz666/roommind** as the RoomMind repository. Select **2.1.0**, install, and restart HA. Do not delete the configured integration.
+2. In HACS, keep **Jaz666/roommind** as the RoomMind repository. Select **2.2.0**, install, and restart HA. Do not delete the configured integration.
 3. Refresh the RoomMind panel. If the old frontend persists, use a hard refresh or private window.
 4. Follow [sensor setup](source-aware-learning.md#connect-this-households-sensors): whole-system CT, per-AC energy counters, and Living Room dehumidifier power. Installing the release does not silently configure these entities.
 5. Check the new cooling-interlock AC list, tariff hours and shared-compressor settings before relying on those controls.

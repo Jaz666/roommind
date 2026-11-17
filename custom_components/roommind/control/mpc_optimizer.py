@@ -51,16 +51,6 @@ def preheat_max_blocks(comfort_weight: float, dt_minutes: float = 5.0, *, enable
     return int(hours * 60 / dt_minutes)
 
 
-def room_preheat_blocks(comfort_weight: float, room: dict, system: str) -> int:
-    """Bound schedule anticipation independently of the cheap-rate preparation window."""
-    if not room.get("preheat_enabled", True):
-        return 0
-    maximum = room.get("preheat_max_minutes", 720 if system == "underfloor" else 60)
-    ceiling = max(0, int(maximum / 5))
-    slider = preheat_max_blocks(comfort_weight)
-    return min(ceiling, slider) if slider is not None else ceiling
-
-
 def slow_start_penalty(min_run_blocks: int, dt_minutes: float = 5.0) -> float:
     """``MPCOptimizer.start_penalty`` for a run of *min_run_blocks*: only slow systems pay for starts.
 

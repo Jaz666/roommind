@@ -122,7 +122,13 @@ class RoomMindStore:
         device_migrated = 0
         hp_migrated = 0
         override_migrated = 0
+        schedule_migrated = False
+        preheat_limit_migrated = False
         for room in self._data.values():
+            if room.pop("roommind_schedule_id", None) is not None:
+                schedule_migrated = True
+            if room.pop("preheat_max_minutes", None) is not None:
+                preheat_limit_migrated = True
             if "devices" not in room:
                 ensure_room_has_devices(room)
                 device_migrated += 1
@@ -136,7 +142,14 @@ class RoomMindStore:
                 _migrate_override_fields(room)
                 override_migrated += 1
         orphan_settings_removed = [k for k in _ORPHAN_SETTINGS_KEYS if self._settings.pop(k, None) is not None]
-        if device_migrated or hp_migrated or override_migrated or orphan_settings_removed:
+        if (
+            device_migrated
+            or hp_migrated
+            or override_migrated
+            or orphan_settings_removed
+            or schedule_migrated
+            or preheat_limit_migrated
+        ):
             await self._async_save()
         if device_migrated:
             _LOGGER.info("Migrated %d room(s) to unified device model", device_migrated)
@@ -146,6 +159,10 @@ class RoomMindStore:
             _LOGGER.info("Migrated %d room(s) to split override heat/cool", override_migrated)
         if orphan_settings_removed:
             _LOGGER.info("Removed orphan setting(s): %s", ", ".join(orphan_settings_removed))
+        if schedule_migrated:
+            _LOGGER.info("Removed retired custom schedule assignments; saved reusable schedule data is retained")
+        if preheat_limit_migrated:
+            _LOGGER.info("Removed retired per-room predictive preheat limits")
 
     async def _async_save(self) -> None:
         """Persist current room data to the HA store."""
@@ -183,53 +200,6 @@ class RoomMindStore:
         self._settings.update(changes)
         await self._async_save()
         return dict(self._settings)
-
-    def get_schedules(self) -> dict[str, dict]:
-        """Return reusable schedules, with detached values."""
-        return copy.deepcopy(self._schedules)
-
-    async def async_save_schedule(self, schedule_id: str, schedule: dict, area_ids: list[str], revision: int) -> dict:
-        """Save a schedule and its linked room assignments in one storage write.
-
-        Revisions prevent an older browser from overwriting another editor.
-        No mutation happens until all references and the revision are checked.
-        """
-        existing = self._schedules.get(schedule_id)
-        if revision != (existing or {}).get("revision", 0):
-            raise ValueError("This schedule changed in another window. Reload it before saving.")
-        if any(area_id not in self._data or self._data[area_id].get("is_outdoor") for area_id in area_ids):
-            raise ValueError("Choose configured indoor rooms only.")
-        saved = copy.deepcopy(schedule)
-        saved["id"] = schedule_id
-        saved["revision"] = revision + 1
-        self._schedules[schedule_id] = saved
-        affected: set[str] = set()
-        for area_id, room in self._data.items():
-            if area_id in area_ids:
-                previous = room.get("roommind_schedule_id", "")
-                if previous and previous != schedule_id:
-                    affected.add(previous)
-                room["roommind_schedule_id"] = schedule_id
-            elif room.get("roommind_schedule_id") == schedule_id:
-                room["roommind_schedule_id"] = ""
-        self._bump_schedule_revisions(affected)
-        await self._async_save()
-        return copy.deepcopy(saved)
-
-    async def async_delete_schedule(self, schedule_id: str, revision: int) -> None:
-        """Delete an unused schedule; assigned rooms must be detached first."""
-        if schedule_id not in self._schedules or self._schedules[schedule_id]["revision"] != revision:
-            raise ValueError("This schedule changed in another window. Reload it before deleting.")
-        if any(room.get("roommind_schedule_id") == schedule_id for room in self._data.values()):
-            raise ValueError("Unassign all rooms and save before deleting this schedule.")
-        del self._schedules[schedule_id]
-        await self._async_save()
-
-    def _bump_schedule_revisions(self, schedule_ids: set[str]) -> None:
-        """Invalidate drafts when assignments change outside their editor."""
-        for schedule_id in schedule_ids:
-            if schedule_id in self._schedules:
-                self._schedules[schedule_id]["revision"] += 1
 
     def get_thermal_data(self) -> dict:
         """Return a deep copy of thermal learning data."""
@@ -307,13 +277,6 @@ class RoomMindStore:
             "dehumidifier_power_sensor": config.get("dehumidifier_power_sensor", ""),
             "dehumidifier_entity": config.get("dehumidifier_entity", ""),
             "dehumidifier_switch": config.get("dehumidifier_switch", ""),
-            "preheat_max_minutes": config.get(
-                "preheat_max_minutes",
-                720
-                if get_room_heating_system_type(config.get("devices", [])) == "underfloor"
-                or config.get("heating_system_type") == "underfloor"
-                else 60,
-            ),
             "occupancy_sensors": config.get("occupancy_sensors", []),
             "occupancy_eco_enabled": config.get("occupancy_eco_enabled", False),
             "occupancy_eco_delay": config.get("occupancy_eco_delay", DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES),
@@ -326,7 +289,6 @@ class RoomMindStore:
             "cooling_interlock_deadband": config.get("cooling_interlock_deadband", 0.3),
             "schedules": config.get("schedules", []),
             "schedule_selector_entity": config.get("schedule_selector_entity", ""),
-            "roommind_schedule_id": config.get("roommind_schedule_id", ""),
             "window_sensors": config.get("window_sensors", []),
             "window_open_delay": config.get("window_open_delay", 0),
             "window_close_delay": config.get("window_close_delay", 0),
@@ -394,15 +356,11 @@ class RoomMindStore:
 
     async def async_save_room(self, area_id: str, config: dict) -> dict:
         """Create or update room configuration for an area."""
-        previous = self._data.get(area_id, {}).get("roommind_schedule_id", "")
         if area_id in self._data:
             room = self._merge_room(area_id, config)
         else:
             room = self._create_room(area_id, config)
             self._data[area_id] = room
-        current = room.get("roommind_schedule_id", "")
-        if previous != current:
-            self._bump_schedule_revisions({previous, current})
         await self._async_save()
         return room
 
@@ -418,11 +376,7 @@ class RoomMindStore:
         # Prevent overriding the area_id
         changes.pop("area_id", None)
 
-        previous = self._data[area_id].get("roommind_schedule_id", "")
         self._data[area_id].update(changes)
-        current = self._data[area_id].get("roommind_schedule_id", "")
-        if previous != current:
-            self._bump_schedule_revisions({previous, current})
         await self._async_save()
         return self._data[area_id]
 
@@ -431,6 +385,5 @@ class RoomMindStore:
         if area_id not in self._data:
             raise KeyError(f"Room '{area_id}' not found")
 
-        self._bump_schedule_revisions({self._data[area_id].get("roommind_schedule_id", "")})
         del self._data[area_id]
         await self._async_save()
