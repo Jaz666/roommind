@@ -230,3 +230,7 @@ In that case RoomMind can decide which source should heat:
 - or both, when the gap is large
 
 It uses temperature gap and outdoor conditions to make that choice.
+
+### AC Assist
+
+With `AC Assist` enabled, both the TRVs and AC run during cheap electricity when the room is below target. At other prices, both run when the room's gap reaches `Assist from gap`. The gap uses the same hysteresis as source selection to avoid repeated switching. The AC still respects its minimum outdoor temperature, capability and shared-compressor protection. Cheap-rate assist also requires `Follow the electricity price` and a price source under `Settings → Price`.

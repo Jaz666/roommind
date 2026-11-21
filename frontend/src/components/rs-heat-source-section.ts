@@ -23,6 +23,8 @@ export class RsHeatSourceSection extends LitElement {
   @property({ type: Number }) public acMinOutdoor = -15.0;
   @property({ type: Boolean }) public editing = false;
   @property({ type: Boolean }) public priceAware = false;
+  @property({ type: Boolean }) public assistEnabled = false;
+  @property({ type: Number }) public assistDelta = 1.0;
   /** A price source is set in the settings; without one the option is hidden. */
   @property({ type: Boolean }) public priceConfigured = false;
   /**
@@ -157,6 +159,32 @@ export class RsHeatSourceSection extends LitElement {
                         .text=${localize("heat_source.price_aware_hint", l)}
                       ></rs-info-icon>
                     </rs-list-row>`
+                  : nothing
+              }
+              <rs-list-row
+                switch
+                wrap
+                .heading=${localize("heat_source.assist", l)}
+                .checked=${this.assistEnabled}
+                @toggle-changed=${(e: CustomEvent<boolean>) =>
+                  this._emit("heat_source_assist_enabled", e.detail)}
+              >
+                <rs-info-icon slot="end" .text=${localize("heat_source.assist_hint", l)}></rs-info-icon>
+              </rs-list-row>
+              ${
+                this.assistEnabled
+                  ? html`<rs-number-field
+                      .hass=${this.hass}
+                      kind="temperature-delta"
+                      .label=${localize("heat_source.assist_delta", l)}
+                      .info=${localize("heat_source.assist_delta_hint", l)}
+                      .value=${this.assistDelta}
+                      .min=${0.5}
+                      .max=${5.0}
+                      .step=${0.1}
+                      @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                        this._emit("heat_source_assist_delta", e.detail.value)}
+                    ></rs-number-field>`
                   : nothing
               }
             </div>`

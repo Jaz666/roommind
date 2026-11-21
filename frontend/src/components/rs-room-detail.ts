@@ -211,6 +211,14 @@ const ROOM_FIELDS: [string, RoomFieldSync][] = [
     "heat_source_price_aware",
     plain("_heatSourcePriceAware", (c) => c?.heat_source_price_aware ?? false),
   ],
+  [
+    "heat_source_assist_enabled",
+    plain("_heatSourceAssistEnabled", (c) => c?.heat_source_assist_enabled ?? false),
+  ],
+  [
+    "heat_source_assist_delta",
+    plain("_heatSourceAssistDelta", (c) => c?.heat_source_assist_delta ?? 1.0),
+  ],
 ];
 
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -310,6 +318,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
+  @state() private _heatSourceAssistEnabled = false;
+  @state() private _heatSourceAssistDelta = 1.0;
   @state() private _optimisticCoverResume = false;
   /** Override as the override control shows it (optimistic until the poll confirms). */
   @state() private _override: EffectiveOverride = NO_OVERRIDE;
@@ -775,6 +785,8 @@ export class RsRoomDetail extends LitElement {
                 .outdoorThreshold=${this._heatSourceOutdoorThreshold}
                 .acMinOutdoor=${this._heatSourceAcMinOutdoor}
                 .priceAware=${this._heatSourcePriceAware}
+                .assistEnabled=${this._heatSourceAssistEnabled}
+                .assistDelta=${this._heatSourceAssistDelta}
                 .priceConfigured=${this.priceConfigured}
                 .outdoorTemp=${this.outdoorTemp}
                 .climateMode=${this._climateMode}
@@ -1116,6 +1128,8 @@ export class RsRoomDetail extends LitElement {
             .outdoorThreshold=${this._heatSourceOutdoorThreshold}
             .acMinOutdoor=${this._heatSourceAcMinOutdoor}
             .priceAware=${this._heatSourcePriceAware}
+            .assistEnabled=${this._heatSourceAssistEnabled}
+            .assistDelta=${this._heatSourceAssistDelta}
             .priceConfigured=${this.priceConfigured}
             .outdoorTemp=${this.outdoorTemp}
             .climateMode=${this._climateMode}
@@ -1486,6 +1500,8 @@ export class RsRoomDetail extends LitElement {
       this._heatSourceOutdoorThreshold = value as number;
     else if (key === "heat_source_ac_min_outdoor") this._heatSourceAcMinOutdoor = value as number;
     else if (key === "heat_source_price_aware") this._heatSourcePriceAware = value as boolean;
+    else if (key === "heat_source_assist_enabled") this._heatSourceAssistEnabled = value as boolean;
+    else if (key === "heat_source_assist_delta") this._heatSourceAssistDelta = value as number;
     this._autoSave();
   }
 

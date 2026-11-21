@@ -246,6 +246,8 @@ export interface RoomConfig {
   heat_source_ac_min_outdoor?: number;
   /** Orchestration: expensive electricity prefers the primary source, cheap the AC. */
   heat_source_price_aware?: boolean;
+  heat_source_assist_enabled?: boolean;
+  heat_source_assist_delta?: number;
   climate_control_enabled?: boolean;
   live?: RoomLiveData;
 }

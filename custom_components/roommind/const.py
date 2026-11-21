@@ -363,6 +363,7 @@ COVER_SMOOTHING_RISE_MINUTES: float = 10.0  # faster EMA while the shading exces
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)
 DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD = 5.0  # °C outdoor: above = prefer AC, below = prefer boiler
 DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR = -15.0  # °C hard-disable AC heating below this
+DEFAULT_HEAT_SOURCE_ASSIST_DELTA = 1.0  # °C gap at which opt-in AC assist engages outside cheap hours
 HEAT_SOURCE_HYSTERESIS = 0.3  # °C hysteresis band to prevent oscillation
 HEAT_SOURCE_LARGE_GAP_MULTIPLIER = 2.0  # activate both sources when gap > primary_delta * this
 HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (prevent overshoot)

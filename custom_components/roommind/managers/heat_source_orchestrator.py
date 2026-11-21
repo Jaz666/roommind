@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
+    DEFAULT_HEAT_SOURCE_ASSIST_DELTA,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     HEAT_SOURCE_HYSTERESIS,
@@ -115,10 +116,19 @@ def evaluate_heat_sources(
         return None
 
     primary_delta = room_config.get("heat_source_primary_delta", DEFAULT_HEAT_SOURCE_PRIMARY_DELTA)
+    assist_enabled = bool(room_config.get("heat_source_assist_enabled", False))
+    assist_delta = room_config.get("heat_source_assist_delta", DEFAULT_HEAT_SOURCE_ASSIST_DELTA)
     outdoor_threshold = room_config.get("heat_source_outdoor_threshold", DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD)
     ac_min_outdoor = room_config.get("heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR)
 
     delta_t = target_temp - current_temp
+    cheap_assist = assist_enabled and price_level == LEVEL_CHEAP and delta_t > 0
+    recovery_assist = assist_enabled and delta_t >= assist_delta + HEAT_SOURCE_HYSTERESIS
+    held_assist = (
+        assist_enabled
+        and previous_active_sources == "both"
+        and delta_t > assist_delta - HEAT_SOURCE_HYSTERESIS
+    )
 
     # Fixed roles: thermostats = primary, ACs = secondary
     primary_devices: list[tuple[str, str]] = [(eid, "thermostat") for eid in thermostats]
@@ -177,6 +187,8 @@ def evaluate_heat_sources(
     elif delta_t <= 0 and previous_active_sources != "both":
         active = "secondary" if prefer_ac else "primary"
     # "both" when gap is large, or hysteresis holds "both" state
+    elif cheap_assist or recovery_assist or held_assist:
+        active = "both"
     elif delta_t >= large_gap_threshold + HEAT_SOURCE_HYSTERESIS:
         active = "both"
     elif previous_active_sources == "both" and delta_t > primary_delta - HEAT_SOURCE_HYSTERESIS:
@@ -208,7 +220,11 @@ def evaluate_heat_sources(
     if ac_disabled and active != "none":
         reason_parts.append(f"AC disabled (outdoor {outdoor_temp}°C < {ac_min_outdoor}°C)")
 
-    if active == "both":
+    if cheap_assist:
+        reason_parts.append("AC assist (cheap electricity)")
+    elif recovery_assist or held_assist:
+        reason_parts.append(f"AC assist ({delta_t:.1f}°C gap)")
+    elif active == "both":
         reason_parts.append(f"large gap ({delta_t:.1f}°C)")
     elif active == "primary":
         outdoor_str = f"{outdoor_temp}°C" if outdoor_temp is not None else "n/a"
