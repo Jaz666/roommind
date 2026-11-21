@@ -147,7 +147,31 @@ const SETTINGS: [keyof GlobalSettings, SettingSync][] = [
       },
       write: (v) => {
         const groups = v.compressorGroups as CompressorGroup[];
-        return groups.filter((g) => compressorGroupProblem(g, groups) === null);
+        return groups
+          .filter((g) => compressorGroupProblem(g, groups) === null)
+          .map(
+            ({
+              id,
+              name,
+              members,
+              min_run_minutes,
+              min_off_minutes,
+              master_entity,
+              conflict_resolution,
+              action_script,
+              enforce_uniform_mode,
+            }) => ({
+              id,
+              name,
+              members,
+              min_run_minutes,
+              min_off_minutes,
+              master_entity,
+              conflict_resolution,
+              action_script,
+              enforce_uniform_mode,
+            }),
+          );
       },
     },
   ],
