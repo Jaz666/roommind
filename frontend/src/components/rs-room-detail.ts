@@ -89,6 +89,27 @@ function configDevices(c: RoomConfig): DeviceConfig[] {
   ];
 }
 
+function devicePayload(state: unknown): DeviceConfig[] {
+  return (state as DeviceConfig[]).map((device) => ({
+    entity_id: device.entity_id,
+    type: device.type,
+    role: device.role,
+    heating_system_type: device.heating_system_type,
+    idle_action: device.idle_action,
+    idle_fan_mode: device.idle_fan_mode,
+    setback_auto_off: device.setback_auto_off,
+    setpoint_mode: device.setpoint_mode,
+    setpoint_offset: device.setpoint_offset,
+    coil_dry: device.coil_dry,
+    coil_dry_minutes: device.coil_dry_minutes,
+    coil_dry_mode: device.coil_dry_mode,
+    coil_dry_fan_mode: device.coil_dry_fan_mode,
+    valve_opening_entity: device.valve_opening_entity,
+    valve_closing_entity: device.valve_closing_entity,
+    valve_closing_mode: device.valve_closing_mode,
+  }));
+}
+
 /**
  * Every room field the page edits. A poll adopts a field changed elsewhere (dashboard card,
  * room climate entity, a second tab) unless it was changed here too, and a save sends only the
@@ -99,11 +120,7 @@ const ROOM_FIELDS: [string, RoomFieldSync][] = [
     "devices",
     {
       ...plain("_devices", (c) => (c ? configDevices(c) : [])),
-      // Older fork builds stored a per-AC energy_sensor, which the current room API rejects.
-      toPayload: (state) =>
-        (state as (DeviceConfig & { energy_sensor?: string })[]).map(
-          ({ energy_sensor: _legacyEnergySensor, ...device }) => device,
-        ),
+      toPayload: devicePayload,
     },
   ],
   ["temperature_sensor", plain("_selectedTempSensor", (c) => c?.temperature_sensor ?? "")],
