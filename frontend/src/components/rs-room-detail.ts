@@ -95,7 +95,17 @@ function configDevices(c: RoomConfig): DeviceConfig[] {
  * fields changed here, so neither writes a stale copy back.
  */
 const ROOM_FIELDS: [string, RoomFieldSync][] = [
-  ["devices", plain("_devices", (c) => (c ? configDevices(c) : []))],
+  [
+    "devices",
+    {
+      ...plain("_devices", (c) => (c ? configDevices(c) : [])),
+      // Older fork builds stored a per-AC energy_sensor, which the current room API rejects.
+      toPayload: (state) =>
+        (state as (DeviceConfig & { energy_sensor?: string })[]).map(
+          ({ energy_sensor: _legacyEnergySensor, ...device }) => device,
+        ),
+    },
+  ],
   ["temperature_sensor", plain("_selectedTempSensor", (c) => c?.temperature_sensor ?? "")],
   ["humidity_sensor", plain("_selectedHumiditySensor", (c) => c?.humidity_sensor ?? "")],
   ["occupancy_sensors", asSet("_selectedOccupancySensors", (c) => c?.occupancy_sensors ?? [])],
