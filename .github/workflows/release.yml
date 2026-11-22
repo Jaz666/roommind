@@ -13,6 +13,29 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - name: Check release and frontend cache versions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 - <<'PY'
+          import ast
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("custom_components/roommind")
+          version = json.loads((root / "manifest.json").read_text())["version"]
+          constants = ast.parse((root / "const.py").read_text())
+          running_version = next(
+              ast.literal_eval(node.value) for node in constants.body
+              if isinstance(node, ast.Assign) and any(
+                  isinstance(target, ast.Name) and target.id == "VERSION" for target in node.targets
+              )
+          )
+          assert running_version == version, "Frontend cache VERSION must match manifest.json"
+          assert os.environ["RELEASE_TAG"] == f"v{version}", "Release tag must match the packaged version"
+          PY
+
       - name: Set up Node
         uses: actions/setup-node@v7.1.0
         with:

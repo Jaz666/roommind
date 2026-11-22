@@ -73,7 +73,7 @@ const asSet = (prop: string, read: (c: RoomConfig | null) => string[]): RoomFiel
 });
 
 function configDevices(c: RoomConfig): DeviceConfig[] {
-  if (c.devices?.length) return [...c.devices];
+  if (c.devices?.length) return devicePayload(c.devices);
   return [
     ...(c.thermostats ?? []).map((eid) => ({
       entity_id: eid,

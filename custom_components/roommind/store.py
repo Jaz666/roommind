@@ -36,6 +36,59 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 STORAGE_KEY = DOMAIN
 
+# Retired household fork settings, checked against the historical release schemas.
+# dehumidifier_entity is now an upstream setting and must be kept.
+_RETIRED_FORK_ROOM_KEYS = (
+    "cooling_interlock_entities",
+    "cooling_interlock_delay",
+    "cooling_interlock_deadband",
+    "ac_off_peak_allow_radiators",
+    "dehumidifier_power_sensor",
+    "dehumidifier_switch",
+    "preheat_max_minutes",
+    "roommind_schedule_id",
+)
+_RETIRED_FORK_SETTINGS_KEYS = (
+    "heat_pump_power_sensor",
+    "heat_pump_active_watts",
+    "ac_tariff_enabled",
+    "ac_off_peak_start",
+    "ac_off_peak_end",
+    "ac_morning_boost_enabled",
+    "ac_morning_boost_minutes",
+    "ac_morning_boost_offset",
+    "ac_morning_boost_stop_margin",
+    "ac_morning_boost_rooms",
+    "ac_tariff_boost_state",
+    "cooling_interlock_state",
+    "shared_ac_state",
+)
+_RETIRED_FORK_GROUP_KEYS = ("shared_ac_control", "heating_idle_mode", "night_cooling_members")
+
+
+def _remove_keys(config: dict, keys: tuple[str, ...]) -> bool:
+    """Remove retired keys, including ones whose stored value is None."""
+    present = config.keys() & keys
+    for key in present:
+        del config[key]
+    return bool(present)
+
+
+def _clean_retired_fork_room(room: dict) -> bool:
+    changed = _remove_keys(room, _RETIRED_FORK_ROOM_KEYS)
+    for device in room.get("devices", []):
+        if _remove_keys(device, ("energy_sensor",)):
+            changed = True
+    return changed
+
+
+def _clean_retired_fork_settings(settings: dict) -> bool:
+    changed = _remove_keys(settings, _RETIRED_FORK_SETTINGS_KEYS)
+    for group in settings.get("compressor_groups", []):
+        if _remove_keys(group, _RETIRED_FORK_GROUP_KEYS):
+            changed = True
+    return changed
+
 
 def _migrate_room_temps(room: dict) -> dict:
     """Migrate legacy single comfort/eco temps to split heat/cool fields.
@@ -87,6 +140,7 @@ def _migrate_override_fields(room: dict) -> dict:
 
 def _migrate_room(room: dict) -> dict:
     """Apply all read-time migrations (safety net)."""
+    _clean_retired_fork_room(room)
     _migrate_room_temps(room)
     _migrate_override_fields(room)
     migrate_heat_pump_devices(room.get("devices", []))
@@ -103,6 +157,7 @@ class RoomMindStore:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialise the store."""
         self._store: Store[dict] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._legacy_fork_backup: Store[dict] = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_legacy_fork_backup")
         self._data: dict[str, dict] = {}
         self._settings: dict = {}
         self._thermal_data: dict = {}
@@ -110,6 +165,7 @@ class RoomMindStore:
     async def async_load(self) -> None:
         """Load room data from the HA store."""
         stored = await self._store.async_load()
+        original = copy.deepcopy(stored)
         if stored and "rooms" in stored:
             self._data = stored["rooms"]
         else:
@@ -122,7 +178,10 @@ class RoomMindStore:
         device_migrated = 0
         hp_migrated = 0
         override_migrated = 0
+        retired_fork_removed = bool(stored and "reusable_schedules" in stored)
         for room in self._data.values():
+            if _clean_retired_fork_room(room):
+                retired_fork_removed = True
             if "devices" not in room:
                 ensure_room_has_devices(room)
                 device_migrated += 1
@@ -136,7 +195,15 @@ class RoomMindStore:
                 _migrate_override_fields(room)
                 override_migrated += 1
         orphan_settings_removed = [k for k in _ORPHAN_SETTINGS_KEYS if self._settings.pop(k, None) is not None]
-        if device_migrated or hp_migrated or override_migrated or orphan_settings_removed:
+        if _clean_retired_fork_settings(self._settings):
+            retired_fork_removed = True
+        if retired_fork_removed:
+            # Keep the first pre-cleanup snapshot, including the old reusable schedules.
+            # Write it before changing the main store so a failed backup cannot lose data.
+            if await self._legacy_fork_backup.async_load() is None:
+                await self._legacy_fork_backup.async_save(original)
+            _LOGGER.info("Removed retired household fork settings; original saved in roommind_legacy_fork_backup")
+        if device_migrated or hp_migrated or override_migrated or orphan_settings_removed or retired_fork_removed:
             await self._async_save()
         if device_migrated:
             _LOGGER.info("Migrated %d room(s) to unified device model", device_migrated)
@@ -149,6 +216,9 @@ class RoomMindStore:
 
     async def _async_save(self) -> None:
         """Persist current room data to the HA store."""
+        _clean_retired_fork_settings(self._settings)
+        for room in self._data.values():
+            _clean_retired_fork_room(room)
         await self._store.async_save(
             {"rooms": self._data, "settings": self._settings, "thermal_data": self._thermal_data}
         )

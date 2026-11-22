@@ -234,3 +234,9 @@ It uses temperature gap and outdoor conditions to make that choice.
 ### AC Assist
 
 With `AC Assist` enabled, both the TRVs and AC run during cheap electricity when the room is below target. At other prices, both run when the room's gap reaches `Assist from gap`. The gap uses the same hysteresis as source selection to avoid repeated switching. The AC still respects its minimum outdoor temperature, capability and shared-compressor protection. Cheap-rate assist also requires `Follow the electricity price` and a price source under `Settings → Price`.
+
+### Upgrading from the older household fork
+
+The personal AC Assist branch uses the upstream settings plus AC Assist. On startup, version `2.0.1-jaz666.5` removes the retired tariff, Morning Boost, cooling interlock, shared AC standby, learning sensor and custom scheduler settings from storage. Upstream schedules, device options, thermal models and AC Assist settings are kept. The original configuration, including the retired reusable schedules, is saved first in `.storage/roommind_legacy_fork_backup`.
+
+After installing, restart Home Assistant and reload the RoomMind page. Personal releases now use their full version in frontend URLs so each update requests the new editor. If a setting is still rejected, the error includes Home Assistant's validation detail and the affected field.

@@ -47,8 +47,11 @@ export function errorText(err: unknown, fallback: string, language: string): str
   if (err === 3) return localize("error.connection_lost", language);
   const e = (err ?? {}) as ErrorLike;
   const code = e.code ?? e.error?.code;
-  const key = code !== undefined ? CODE_KEYS[String(code)] : undefined;
-  if (key) return localize(key, language);
   const message = e.message ?? e.error?.message;
+  const key = code !== undefined ? CODE_KEYS[String(code)] : undefined;
+  // Validation messages name the rejected field; keep that detail for settings failures.
+  if (code === "invalid_format" && typeof message === "string" && message)
+    return `${localize("error.invalid_format", language)} ${message}`;
+  if (key) return localize(key, language);
   return typeof message === "string" && message ? message : fallback;
 }
